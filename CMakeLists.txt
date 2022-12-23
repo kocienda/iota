@@ -11,12 +11,15 @@ include(CTest)
 enable_testing()
 
 add_executable(ref ref-tool.cpp)
+add_executable(umatch match-tool.cpp)
 
 find_package(UU REQUIRED)
-# Add the include directories for the library
+
 target_include_directories(ref PRIVATE /u/include)
-# Link the library to your target
+target_include_directories(umatch PRIVATE /u/include)
+
 target_link_libraries(ref UU)
+target_link_libraries(umatch UU)
 
 install(TARGETS ref DESTINATION bin)
 

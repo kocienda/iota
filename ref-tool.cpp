@@ -46,9 +46,7 @@ static struct option long_options[] =
 
 int main(int argc, char *argv[])
 {
-    int i = atoi("1");
-
-    char *opener = getenv("EDIT_OPENER");
+    std::string opener = getenv("EDIT_OPENER");
     std::filesystem::path refs_path = getenv("REFS_PATH");
 
     while (1) {
@@ -65,7 +63,7 @@ int main(int argc, char *argv[])
                 usage();
                 return 0;            
             case 'o':
-                opener = strdup(optarg);
+                opener = optarg;
                 break;
             case 'v':
                 version();
@@ -90,7 +88,7 @@ int main(int argc, char *argv[])
         exit(0);
     }
 
-    if (!opener) {
+    if (opener.empty()) {
         std::cerr << "*** ref: no opener program specified" << std::endl;
         exit(-1);
     }
@@ -121,16 +119,11 @@ int main(int argc, char *argv[])
     }
     span.simplify();
 
-    int nothing_index = 2;
-    size_t max_count = refs.size() + 3;
-    char **args = (char **)malloc(max_count * sizeof(char *));
-    int index = 0;
-    args[index++] = opener;
+    std::vector<std::string> exec_args;
+    exec_args.push_back(opener);
 
-    static const char *g_option = "-g";
-    if (strcmp(opener, "code") == 0) {
-        args[index++] = (char *)g_option;
-        nothing_index++;
+    if (opener == "code") {
+        exec_args.push_back("-g");
     }
 
     for (int sidx : span) {
@@ -139,22 +132,15 @@ int main(int argc, char *argv[])
         }
         sidx--;
         const TextRef &ref = refs[sidx];
-        std::string arg(ref.to_string(TextRef::SourceName | TextRef::Line |  TextRef::Column));
-        args[index++] = strdup(arg.c_str());
+        exec_args.push_back(ref.to_string(TextRef::SourceName | TextRef::Line |  TextRef::Column));
     }
 
-    args[index] = NULL;
-
-    if (index < nothing_index) {
+    if (exec_args.size() == 1) {
         // nothing found
         return -1;
     }
     
-    int rc = execvp(opener, args);
-    if (rc) {
-        fprintf(stderr, "*** ref: exec error: %s\n", strerror(errno));
-        exit(rc);
-    }
-
-    return 0;
+    int rc = UU::launch(opener, exec_args);
+    std::cerr << "*** ref: exec error: " << strerror(errno) << std::endl;
+    return rc;
 }
