@@ -100,7 +100,10 @@
 			"strstream": "cpp",
 			"thread": "cpp",
 			"unordered_set": "cpp",
-			"__std_stream": "cpp"
+			"__std_stream": "cpp",
+			"any": "cpp",
+			"functional": "cpp",
+			"hash_map": "cpp"
 		}
 	}
 }

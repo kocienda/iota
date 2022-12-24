@@ -119,8 +119,11 @@ int main(int argc, char *argv[])
     }
     span.simplify();
 
+    if (span.is_empty()) {
+        return 0;
+    }
+
     std::vector<std::string> exec_args;
-    exec_args.push_back(opener);
 
     if (opener == "code") {
         exec_args.push_back("-g");
@@ -132,14 +135,9 @@ int main(int argc, char *argv[])
         }
         sidx--;
         const TextRef &ref = refs[sidx];
-        exec_args.push_back(ref.to_string(TextRef::SourceName | TextRef::Line |  TextRef::Column));
+        exec_args.push_back(ref.to_string(TextRef::Filename | TextRef::Line |  TextRef::Column));
     }
 
-    if (exec_args.size() == 1) {
-        // nothing found
-        return -1;
-    }
-    
     int rc = UU::launch(opener, exec_args);
     std::cerr << "*** ref: exec error: " << strerror(errno) << std::endl;
     return rc;

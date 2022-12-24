@@ -2,14 +2,10 @@
 //  match-tool.cpp
 //
 
-#include <filesystem>
 #include <fstream>
-#include <iostream>
-#include <sstream>
 #include <string>
 #include <vector>
 
-#include <fnmatch.h>
 #include <getopt.h>
 
 #include <UU/UU.h>
