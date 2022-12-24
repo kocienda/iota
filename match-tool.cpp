@@ -60,14 +60,19 @@ static struct option long_options[] =
 static std::vector<fs::path> find_matches(const fs::path &dir, const std::vector<std::string> &patterns, int flags)
 {
     std::vector<fs::path> result;
-    for (const auto &dir_entry : fs::recursive_directory_iterator(dir)) {
+    fs::directory_options options = fs::directory_options::skip_permission_denied;
+    for (auto it = fs::recursive_directory_iterator(dir, options); it != fs::recursive_directory_iterator(); ++it) {
+        const fs::directory_entry &dir_entry = *it;
+        const fs::path &path = dir_entry.path();
+        if (dir_entry.is_directory() && UU::is_skippable(UU::skippable_paths(), path)) {
+            it.disable_recursion_pending();
+            continue;
+        }
         if (!dir_entry.is_regular_file()) {
             continue;
         }
-        const fs::path &path = dir_entry.path();
         for (const auto &pattern : patterns) {
-            // std::cout << "match: " << pattern << ":" << path.filename() << std::endl;
-            if (fnmatch(pattern.c_str(), path.filename().c_str(), flags) == 0) {
+            if (UU::filename_match(pattern, path, flags)) {
                 result.push_back(path);
                 break;
             }
@@ -79,7 +84,7 @@ static std::vector<fs::path> find_matches(const fs::path &dir, const std::vector
 int main(int argc, char *argv[])
 {
     std::string opener;
-    int flags = FNM_CASEFOLD | FNM_PERIOD;
+    bool option_c = false;
     bool option_e = false;
     bool option_f = false;
     bool option_p = false;
@@ -94,7 +99,7 @@ int main(int argc, char *argv[])
             break;
         switch (c) {
             case 'c':
-                flags &= ~FNM_CASEFOLD;
+                option_c = true;
                 break;
             case 'e':
                 option_e = true;
@@ -142,6 +147,14 @@ int main(int argc, char *argv[])
     fs::path dir;
     fs::path prevdir;
 
+    int filename_match_flags = 0;
+    if (option_c) {
+        filename_match_flags |= UU::FilenameMatchCaseSensitive;  
+    }
+    if (option_e) {
+        filename_match_flags |= UU::FilenameMatchExact;  
+    }
+
     int loop_end = option_s ? argc : optind + 1;
 
     for (int i = optind; i < loop_end; i++) {
@@ -162,25 +175,14 @@ int main(int argc, char *argv[])
         else {
             dir = cwd;
         }
-
-        // build pattern
-        std::string pattern;
-        if (option_e) {
-            pattern = str;
-        }
-        else {
-            pattern = '*';
-            pattern += str;
-            pattern += '*';
-        }
-        patterns.push_back(pattern);
+        patterns.push_back(str);
 
         // add to pattern list
         if (!prevdir.empty()) {
             prevdir = dir;
         }
         else if (dir != prevdir) {
-            std::vector<fs::path> submatches(find_matches(dir, patterns, flags));
+            std::vector<fs::path> submatches(find_matches(dir, patterns, filename_match_flags));
             matches.insert(matches.end(), submatches.begin(), submatches.end());
             prevdir = dir;
             patterns.clear();
@@ -188,7 +190,7 @@ int main(int argc, char *argv[])
     }
 
     if (patterns.size()) {
-        std::vector<fs::path> submatches(find_matches(dir, patterns, flags));
+        std::vector<fs::path> submatches(find_matches(dir, patterns, filename_match_flags));
         matches.insert(matches.end(), submatches.begin(), submatches.end());
     }
 
@@ -198,19 +200,10 @@ int main(int argc, char *argv[])
             if (matches.size() == 0) {
                 break;
             }
-            std::string pattern;
-            if (option_e) {
-                pattern = argv[i];
-            }
-            else {
-                pattern = '*';
-                pattern += argv[i];
-                pattern += '*';
-            }
-            // std::cout << "pattern [2]: " << pattern << std::endl;
+            std::string pattern = argv[i];
             std::vector<fs::path> filtered_matches;
             for (const auto &match : matches) {
-                if (fnmatch(pattern.c_str(), match.filename().c_str(), flags) == 0) {
+                if (UU::filename_match(pattern, match, filename_match_flags)) {
                     filtered_matches.push_back(match);
                 }
             }
