@@ -54,6 +54,8 @@ static struct option long_options[] =
     {0, 0, 0, 0}
 };
 
+enum class SearchCase { Sensitive, Insensitive };
+
 static std::vector<fs::path> build_file_list(const fs::path &dir)
 {
     std::vector<fs::path> result;
@@ -75,144 +77,65 @@ static std::vector<fs::path> build_file_list(const fs::path &dir)
     return result;
 }
 
-static void add_line_to_results(const fs::path &path, int line_num, char *line, std::vector<TextRef> &results) 
+static void add_line_to_results(const fs::path &path, size_t line_num, const std::string &line, std::vector<TextRef> &results) 
 {
-    size_t line_length = strlen(line);
-    if (line_length > 1 && line[line_length - 1] == '\n') {
-        line[line_length - 1] = '\0';
-    }
     size_t index = results.size() + 1;
     results.push_back(TextRef(index, path, line_num, line));
 }
 
-enum { CaseSensitiveSearch = 0, CaseInsensitiveSearch = 1,  };
-
-enum SearchCase { None = 0, Sensitive = 1, Insensitive = 2  };
-
-template <typename P, SearchCase C = SearchCase::None> bool search_line(P pattern, const char *line)
-{
-    return false;
-}
-
-template <const std::string &, SearchCase C> bool search_line(const std::string &pattern, const char *line)
-{
-    if constexpr (C == SearchCase::Sensitive) {
-        return strstr(pattern.c_str(), line);
-    }
-    else if constexpr (C == SearchCase::Insensitive) {
-        return strcasestr(pattern.c_str(), line);
-    }
-    return false;
-}
-
-template <const std::regex &, SearchCase> bool search_line(const std::regex &pattern, const char *line)
-{
-    std::cmatch match;
-    return std::regex_search(line, match, pattern);
-}
-
-template <typename P, SearchCase C>
-std::vector<TextRef> search_file_t(const fs::path &path, const std::vector<P> &patterns)
+std::vector<TextRef> search_file_s(const fs::path &path, const std::vector<std::string> &needles)
 {
     std::vector<TextRef> results;
 
-    if (patterns.size() == 0 ) {
-        return results;
-    }
+    std::string haystack = UU::get_file_contents_as_string(path);
 
-    FILE *file = fopen(path.c_str(), "r");
-    if (file == NULL) {
-        std::cerr << "error opening file: " << path << ": " << strerror(errno) << std::endl;
-        return results;
-    }
-
-    int line_num = 0;
-    char *line = NULL;
-    size_t linecap = 0;
-    while (true) {
-        ssize_t rc = getline(&line, &linecap, file);
-        if (rc == -1) {
-            break;
+    std::vector<size_t> found_offsets;
+    for (const auto &needle : needles) {
+        const std::boyer_moore_searcher searcher(needle.begin(), needle.end());
+        auto hit = haystack.begin();
+        while (true) {
+            auto it = std::search(hit, haystack.end(), searcher);
+            if (it == haystack.end()) {
+                break;
+            }
+            found_offsets.push_back(it - haystack.begin());
+            hit = ++it;
         }
-        line_num++;
-        bool matches_all = true;
-        if (patterns.size()) {
-            for (const auto &pattern : patterns) {
-                if (!search_line<P, C>(pattern, line)) {
-                    matches_all = false;
-                }
-                if (!matches_all) {
+    }
+    if (found_offsets.size() > 0) {
+        // maintain line count
+        std::vector<size_t> line_offsets;
+        line_offsets.push_back(0);
+
+        for (const auto offset : found_offsets) {
+            // search backward for start of line
+            size_t sidx = offset;
+            while (sidx > 0) {
+                if (haystack[sidx - 1] == '\n') {
                     break;
                 }
+                sidx--;
             }
-        }
-        if (matches_all) {
-            add_line_to_results(path, line_num, line, results);
-        }
-    }
-    fclose(file);
-
-    return results;
-}
-
-
-
-std::vector<TextRef> search_file(const fs::path &path, const std::vector<std::string> &string_patterns, 
-    const std::vector<std::regex> &regex_patterns, int flags)
-{
-    std::vector<TextRef> results;
-
-    if (string_patterns.size() == 0 && regex_patterns.size() == 0) {
-        return results;
-    }
-
-    FILE *file = fopen(path.c_str(), "r");
-    if (file == NULL) {
-        std::cerr << "error opening file: " << path << ": " << strerror(errno) << std::endl;
-        return results;
-    }
-
-    char *(*string_search_fn)(const char *, const char *) = strstr;
-    if (flags & CaseInsensitiveSearch) {
-        string_search_fn = strcasestr;
-    }
-
-    int line_num = 0;
-    char *line = NULL;
-    size_t linecap = 0;
-    while (true) {
-        ssize_t rc = getline(&line, &linecap, file);
-        if (rc == -1) {
-            break;
-        }
-        line_num++;
-        bool matches_all = true;
-        if (string_patterns.size()) {
-            for (const auto &pattern : string_patterns) {
-                if (!string_search_fn(line, pattern.c_str())) {
-                    matches_all = false;
-                }
-                if (!matches_all) {
+            // search forward for end of line
+            size_t eidx = offset;
+            while (eidx < haystack.length()) {
+                if (haystack[eidx] == '\n') {
                     break;
                 }
+                eidx++;
             }
-        }
-        if (regex_patterns.size()) {
-            for (const auto &pattern : regex_patterns) {
-                std::cmatch match;
-                if (!std::regex_search(line, match, pattern)) {
-                    matches_all = false;
-                }
-                if (!matches_all) {
-                    break;
+            std::string line = haystack.substr(sidx, eidx - sidx);
+
+            // count lines
+            for (auto idx = line_offsets.back() + 1; idx < eidx; idx++) {
+                if (haystack[idx] == '\n') {
+                    line_offsets.push_back(idx);
                 }
             }
-        }
-        if (matches_all) {
-            add_line_to_results(path, line_num, line, results);
+
+            add_line_to_results(path, line_offsets.size(), line, results);
         }
     }
-    fclose(file);
 
     return results;
 }
@@ -327,7 +250,7 @@ int main(int argc, char **argv)
 
     fs::path current_path = fs::current_path();
     const auto &file_list = build_file_list(current_path);
-    int search_flags = option_i ? CaseInsensitiveSearch : CaseSensitiveSearch;
+    // SearchCase search_case = option_i ? SearchCase::Insensitive : SearchCase::Sensitive;
 
     __block std::vector<TextRef> found;
     __block int completions = 0;
@@ -348,7 +271,16 @@ int main(int argc, char **argv)
         }
         else {
             dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-                std::vector<TextRef> file_results(search_file(path, string_patterns, regex_patterns, search_flags));
+                std::vector<TextRef> file_results;
+                if (option_e) {
+
+                }
+                else if (option_i) {
+                }
+                else {
+                    file_results = search_file_s(path, string_patterns);
+                }
+                // std::vector<TextRef> file_results(search_file(path, string_patterns, regex_patterns, search_flags));
                 dispatch_async(completion_queue, ^{
                     completion_block(file_results);    
                 });
