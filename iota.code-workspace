@@ -105,7 +105,8 @@
 			"functional": "cpp",
 			"hash_map": "cpp",
 			"*.inc": "cpp",
-			"semaphore": "cpp"
+			"semaphore": "cpp",
+			"valarray": "cpp"
 		}
 	}
 }
