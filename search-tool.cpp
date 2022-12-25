@@ -33,37 +33,36 @@ static void usage(void)
     puts("Usage: search [options] <search-string>...");
     puts("");
     puts("Options:");
-    puts("    -a : Matches any pattern given.");
+    puts("    -a : Search for files in all directories, including those in ENV['SKIPPABLES_PATH'].");
     puts("    -e : Search pattern is a regular expression.");
     puts("    -h : Prints this help message.");
     puts("    -i : Case insensitive search.");
-    puts("    -r : Replace found search patterns with last argument on command line, which must be a string.");
-    puts("    -s : Skip files listed in .skippables.");
+    puts("    -r : Replace found search patterns with last argument on command line (which is treated as a string).");
     puts("    -v : Prints the program version.");
 }
 
 static struct option long_options[] =
 {
-    {"all",               no_argument,       0, 'a'},
-    {"search with regex", no_argument,       0, 'e'},
+    {"all files",         no_argument,       0, 'a'},
+    {"regex search",      no_argument,       0, 'e'},
     {"help",              no_argument,       0, 'h'},
     {"case-insensitive",  no_argument,       0, 'i'},
     {"replace",           no_argument,       0, 'r'},
-    {"skip",              no_argument,       0, 's'},
     {"version",           no_argument,       0, 'v'},
     {0, 0, 0, 0}
 };
 
 enum class SearchCase { Sensitive, Insensitive };
+enum class Skip { SkipNone, SkipSkippables };
 
-static std::vector<fs::path> build_file_list(const fs::path &dir)
+static std::vector<fs::path> build_file_list(const fs::path &dir, Skip skip = Skip::SkipSkippables)
 {
     std::vector<fs::path> result;
     fs::directory_options options = fs::directory_options::skip_permission_denied;
     for (auto it = fs::recursive_directory_iterator(dir, options); it != fs::recursive_directory_iterator(); ++it) {
         const fs::directory_entry &dir_entry = *it;
         const fs::path &path = dir_entry.path();
-        if (dir_entry.is_directory() && UU::is_skippable(UU::skippable_paths(), path)) {
+        if (dir_entry.is_directory() && skip == Skip::SkipSkippables && UU::is_skippable(UU::skippable_paths(), path)) {
             it.disable_recursion_pending();
             continue;
         }
@@ -83,11 +82,23 @@ static void add_line_to_results(const fs::path &path, size_t line_num, const std
     results.push_back(TextRef(index, path, line_num, line));
 }
 
-std::vector<TextRef> search_file_s(const fs::path &path, const std::vector<std::string> &needles)
+std::vector<TextRef> search_file(const fs::path &path, const std::vector<std::string> &needles, SearchCase search_case)
 {
     std::vector<TextRef> results;
 
-    std::string haystack = UU::get_file_contents_as_string(path);
+    UU::MappedFile mapped_file(path);
+    if (mapped_file.is_valid<false>()) {
+        return results;
+    }
+
+    std::string_view haystack((char *)mapped_file.base(), mapped_file.file_length());
+    std::string case_folded_string;
+
+    if (search_case == SearchCase::Insensitive) {
+        case_folded_string = std::string(haystack);
+        std::transform(case_folded_string.cbegin(), case_folded_string.cend(), case_folded_string.begin(), [](unsigned char c) { return std::tolower(c); });
+        haystack = case_folded_string;
+    }
 
     std::vector<size_t> found_offsets;
     for (const auto &needle : needles) {
@@ -124,7 +135,7 @@ std::vector<TextRef> search_file_s(const fs::path &path, const std::vector<std::
                 }
                 eidx++;
             }
-            std::string line = haystack.substr(sidx, eidx - sidx);
+            std::string line = std::string(haystack.substr(sidx, eidx - sidx));
 
             // count lines
             for (auto idx = line_offsets.back() + 1; idx < eidx; idx++) {
@@ -167,18 +178,21 @@ static void report_results(const fs::path &current_path, std::vector<TextRef> &r
 
 int main(int argc, char **argv)
 {
+    bool option_a = false;
     bool option_e = false;
     bool option_i = false;
     bool option_r = false;
-    bool option_s = false;
 
     while (1) {
         int option_index = 0;
-        int c = getopt_long(argc, argv, "ehirsv", long_options, &option_index);
+        int c = getopt_long(argc, argv, "aehirv", long_options, &option_index);
         if (c == -1)
             break;
     
         switch (c) {
+            case 'a':
+                option_a = true;
+                break;
             case 'e':
                 option_e = true;
                 break;
@@ -190,9 +204,6 @@ int main(int argc, char **argv)
                 break;            
             case 'r':
                 option_r = true;
-                break;
-            case 's':
-                option_s = true;
                 break;
             case 'v':
                 version();
@@ -232,7 +243,11 @@ int main(int argc, char **argv)
             regex_patterns.push_back(std::regex(arg, regex_flags));
         }
         else {
-            string_patterns.push_back(arg);
+            std::string pattern(arg);
+            if (option_i) {
+                std::transform(pattern.cbegin(), pattern.cend(), pattern.begin(), [](unsigned char c) { return std::tolower(c); });    
+            }
+            string_patterns.push_back(pattern);
         }
     //     else if (option_r && option_i) {
     //         // Strings which are case-insensive are treated like regexes when replacing.
@@ -245,12 +260,10 @@ int main(int argc, char **argv)
     //     }
     }
     
-    std::cout << "string_patterns.size: " << string_patterns.size() << std::endl;
-    std::cout << "regex_patterns.size:  " << regex_patterns.size() << std::endl;
+    SearchCase search_case = option_i ? SearchCase::Insensitive : SearchCase::Sensitive;
 
     fs::path current_path = fs::current_path();
-    const auto &file_list = build_file_list(current_path);
-    // SearchCase search_case = option_i ? SearchCase::Insensitive : SearchCase::Sensitive;
+    const auto &file_list = build_file_list(current_path, option_a ? Skip::SkipNone : Skip::SkipSkippables);
 
     __block std::vector<TextRef> found;
     __block int completions = 0;
@@ -275,12 +288,9 @@ int main(int argc, char **argv)
                 if (option_e) {
 
                 }
-                else if (option_i) {
-                }
                 else {
-                    file_results = search_file_s(path, string_patterns);
+                    file_results = search_file(path, string_patterns, search_case);
                 }
-                // std::vector<TextRef> file_results(search_file(path, string_patterns, regex_patterns, search_flags));
                 dispatch_async(completion_queue, ^{
                     completion_block(file_results);    
                 });
