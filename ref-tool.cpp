@@ -14,6 +14,7 @@
 
 using UU::Span;
 using UU::TextRef;
+using UU::UInt32;
 
 extern int optind;
 
@@ -112,8 +113,8 @@ int main(int argc, char *argv[])
         return 0;
     }
 
-    Span<int> span;
-    for (int i = optind; i < argc; i++) {
+    Span<UInt32> span;
+    for (UInt32 i = optind; i < argc; i++) {
         std::string arg(argv[i]);
         span.add(arg);
     }

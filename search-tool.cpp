@@ -2,11 +2,12 @@
 //  search-tool.cpp
 //
 
+#include <algorithm>
 #include <fstream>
-#include <mutex>
 #include <string>
 #include <vector>
 
+#include <dispatch/dispatch.h>
 #include <getopt.h>
 #include <stdio.h>
 
@@ -15,6 +16,8 @@
 extern int optind;
 
 namespace fs = std::filesystem;
+
+using UU::TextRef;
 
 static void version(void)
 {
@@ -69,33 +72,21 @@ static std::vector<fs::path> build_file_list(const fs::path &dir)
     return result;
 }
 
-const int LineBufferLength = 1024 * 1024;
-
-static char *line_buffer()
-{
-    static char *line;
-    static std::once_flag flag;
-    std::call_once(flag, []() { 
-        line = static_cast<char *>(malloc(LineBufferLength));
-    });
-    return line;
-}
-
-static void add_line_to_results(const fs::path &path, int line_num, char *line, std::vector<UU::TextRef> &results) 
+static void add_line_to_results(const fs::path &path, int line_num, char *line, std::vector<TextRef> &results) 
 {
     size_t line_length = strlen(line);
     if (line_length > 1 && line[line_length - 1] == '\n') {
         line[line_length - 1] = '\0';
     }
-    int index = results.size() + 1;
-    results.push_back(UU::TextRef(index, path, line_num, std::string(line)));
+    size_t index = results.size() + 1;
+    results.push_back(TextRef(index, path, line_num, line));
 }
 
 enum { CaseSensitiveSearch = 0, CaseInsensitiveSearch = 1 };
 
-std::vector<UU::TextRef> search_file(const fs::path &path, const std::vector<std::string> &search_patterns, int flags)
+std::vector<TextRef> search_file(const fs::path &path, const std::vector<std::string> &search_patterns, int flags)
 {
-    std::vector<UU::TextRef> results;
+    std::vector<TextRef> results;
 
     if (search_patterns.size() == 0) {
         return results;
@@ -111,11 +102,15 @@ std::vector<UU::TextRef> search_file(const fs::path &path, const std::vector<std
     if (flags & CaseInsensitiveSearch) {
         search_fn = strcasestr;
     }
-    
-    char *line = line_buffer();
-    
+
     int line_num = 0;
-    while (fgets(line, LineBufferLength, file)) {
+    char *line = NULL;
+    size_t linecap = 0;
+    while (true) {
+        ssize_t rc = getline(&line, &linecap, file);
+        if (rc == -1) {
+            break;
+        }
         line_num++;
         bool matches_all = true;
         for (const auto &pattern : search_patterns) {
@@ -131,8 +126,33 @@ std::vector<UU::TextRef> search_file(const fs::path &path, const std::vector<std
         }
     }
     fclose(file);
-    
+
     return results;
+}
+
+static void report_results(const fs::path &current_path, std::vector<TextRef> &results) {
+    int count = 1;
+    for (auto &ref : results) {
+        ref.set_index(count);
+        count++;
+        std::cout << ref.to_string(TextRef::AllFeatures, TextRef::FilenameFormat::RELATIVE, current_path) << std::endl;
+    }
+
+    const char *refs_path = getenv("REFS_PATH");
+    if (refs_path) {
+        std::ofstream file(refs_path);
+        if (!file.fail()) {
+            count = 1;
+            for (auto ref : results) {
+                ref.set_index(count);
+                count++;
+                std::string str = ref.to_string(TextRef::AllFeatures, TextRef::FilenameFormat::ABSOLUTE);
+                file << str << std::endl;
+            }
+        } 
+    }
+
+    exit(0);
 }
 
 int main(int argc, char **argv)
@@ -140,7 +160,6 @@ int main(int argc, char **argv)
     bool option_i = false;
     bool option_r = false;
     bool option_s = false;
-    unsigned flags = 0;
 
     while (1) {
         int option_index = 0;
@@ -218,43 +237,40 @@ int main(int argc, char **argv)
     }
     
     fs::path current_path = fs::current_path();
-
     const auto &file_list = build_file_list(current_path);
-
     int search_flags = option_i ? CaseInsensitiveSearch : CaseSensitiveSearch;
 
-    std::vector<UU::TextRef> found;
+    __block std::vector<TextRef> found;
+    __block int completions = 0;
+    const size_t expected_completions = file_list.size();
+    dispatch_queue_t completion_queue = dispatch_queue_create("search-tool", DISPATCH_QUEUE_SERIAL);
+    // dispatch_semaphore_t semaphore = dispatch_semaphore_create(8);
+    void (^completion_block)(const std::vector<TextRef> &) = ^void(const std::vector<TextRef> &file_results) {
+        // dispatch_semaphore_signal(semaphore);
+        found.insert(found.end(), file_results.begin(), file_results.end());
+        completions++;
+        if (completions == expected_completions) {
+            report_results(current_path, found);
+        }
+    };
+
     for (const auto &path : file_list) {
         if (option_r) {
             // vector<TextRef> file_results(fts_search_replace(path, search_patterns, replace, flags));
             // found.insert(found.end(), file_results.begin(), file_results.end());
         }
         else {
-            std::vector<UU::TextRef> file_results(search_file(path, search_patterns, search_flags));
-            found.insert(found.end(), file_results.begin(), file_results.end());
+            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+                // dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
+                std::vector<TextRef> file_results(search_file(path, search_patterns, search_flags));
+                dispatch_async(completion_queue, ^{
+                    completion_block(file_results);    
+                });
+            });
         }
     }
 
-    int count = 1;
-    for (auto &text_ref : found) {
-        text_ref.set_index(count);
-        count++;
-        std::cout << text_ref.to_string(UU::TextRef::AllFeatures, UU::TextRef::FilenameFormat::RELATIVE, current_path) << std::endl;
-    }
-
-    const char *refs_path = getenv("REFS_PATH");
-    if (refs_path) {
-        std::ofstream file(refs_path);
-        if (!file.fail()) {
-            count = 1;
-            for (auto text_ref : found) {
-                text_ref.set_index(count);
-                count++;
-                std::string str = text_ref.to_string(UU::TextRef::AllFeatures, UU::TextRef::FilenameFormat::ABSOLUTE);
-                file << str << std::endl;
-            }
-        } 
-    }
+    dispatch_main();
 
     return 0;
 }
