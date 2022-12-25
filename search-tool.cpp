@@ -85,7 +85,77 @@ static void add_line_to_results(const fs::path &path, int line_num, char *line, 
     results.push_back(TextRef(index, path, line_num, line));
 }
 
-enum { CaseSensitiveSearch = 0, CaseInsensitiveSearch = 1 };
+enum { CaseSensitiveSearch = 0, CaseInsensitiveSearch = 1,  };
+
+enum SearchCase { None = 0, Sensitive = 1, Insensitive = 2  };
+
+template <typename P, SearchCase C = SearchCase::None> bool search_line(P pattern, const char *line)
+{
+    return false;
+}
+
+template <const std::string &, SearchCase C> bool search_line(const std::string &pattern, const char *line)
+{
+    if constexpr (C == SearchCase::Sensitive) {
+        return strstr(pattern.c_str(), line);
+    }
+    else if constexpr (C == SearchCase::Insensitive) {
+        return strcasestr(pattern.c_str(), line);
+    }
+    return false;
+}
+
+template <const std::regex &, SearchCase> bool search_line(const std::regex &pattern, const char *line)
+{
+    std::cmatch match;
+    return std::regex_search(line, match, pattern);
+}
+
+template <typename P, SearchCase C>
+std::vector<TextRef> search_file_t(const fs::path &path, const std::vector<P> &patterns)
+{
+    std::vector<TextRef> results;
+
+    if (patterns.size() == 0 ) {
+        return results;
+    }
+
+    FILE *file = fopen(path.c_str(), "r");
+    if (file == NULL) {
+        std::cerr << "error opening file: " << path << ": " << strerror(errno) << std::endl;
+        return results;
+    }
+
+    int line_num = 0;
+    char *line = NULL;
+    size_t linecap = 0;
+    while (true) {
+        ssize_t rc = getline(&line, &linecap, file);
+        if (rc == -1) {
+            break;
+        }
+        line_num++;
+        bool matches_all = true;
+        if (patterns.size()) {
+            for (const auto &pattern : patterns) {
+                if (!search_line<P, C>(pattern, line)) {
+                    matches_all = false;
+                }
+                if (!matches_all) {
+                    break;
+                }
+            }
+        }
+        if (matches_all) {
+            add_line_to_results(path, line_num, line, results);
+        }
+    }
+    fclose(file);
+
+    return results;
+}
+
+
 
 std::vector<TextRef> search_file(const fs::path &path, const std::vector<std::string> &string_patterns, 
     const std::vector<std::regex> &regex_patterns, int flags)
