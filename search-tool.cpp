@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <regex>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,7 @@ extern int optind;
 
 namespace fs = std::filesystem;
 
+using UU::Any;
 using UU::TextRef;
 
 static void version(void)
@@ -42,12 +44,13 @@ static void usage(void)
 
 static struct option long_options[] =
 {
-    {"all",              no_argument,       0, 'a'},
-    {"help",             no_argument,       0, 'h'},
-    {"case-insensitive", no_argument,       0, 'i'},
-    {"replace",          no_argument,       0, 'r'},
-    {"skip",             no_argument,       0, 's'},
-    {"version",          no_argument,       0, 'v'},
+    {"all",               no_argument,       0, 'a'},
+    {"search with regex", no_argument,       0, 'e'},
+    {"help",              no_argument,       0, 'h'},
+    {"case-insensitive",  no_argument,       0, 'i'},
+    {"replace",           no_argument,       0, 'r'},
+    {"skip",              no_argument,       0, 's'},
+    {"version",           no_argument,       0, 'v'},
     {0, 0, 0, 0}
 };
 
@@ -84,11 +87,12 @@ static void add_line_to_results(const fs::path &path, int line_num, char *line, 
 
 enum { CaseSensitiveSearch = 0, CaseInsensitiveSearch = 1 };
 
-std::vector<TextRef> search_file(const fs::path &path, const std::vector<std::string> &search_patterns, int flags)
+std::vector<TextRef> search_file(const fs::path &path, const std::vector<std::string> &string_patterns, 
+    const std::vector<std::regex> &regex_patterns, int flags)
 {
     std::vector<TextRef> results;
 
-    if (search_patterns.size() == 0) {
+    if (string_patterns.size() == 0 && regex_patterns.size() == 0) {
         return results;
     }
 
@@ -98,9 +102,9 @@ std::vector<TextRef> search_file(const fs::path &path, const std::vector<std::st
         return results;
     }
 
-    char *(*search_fn)(const char *, const char *) = strstr;
+    char *(*string_search_fn)(const char *, const char *) = strstr;
     if (flags & CaseInsensitiveSearch) {
-        search_fn = strcasestr;
+        string_search_fn = strcasestr;
     }
 
     int line_num = 0;
@@ -113,12 +117,25 @@ std::vector<TextRef> search_file(const fs::path &path, const std::vector<std::st
         }
         line_num++;
         bool matches_all = true;
-        for (const auto &pattern : search_patterns) {
-            if (!matches_all) {
-                break;
+        if (string_patterns.size()) {
+            for (const auto &pattern : string_patterns) {
+                if (!string_search_fn(line, pattern.c_str())) {
+                    matches_all = false;
+                }
+                if (!matches_all) {
+                    break;
+                }
             }
-            if (!search_fn(line, pattern.c_str())) {
-                matches_all = false;
+        }
+        if (regex_patterns.size()) {
+            for (const auto &pattern : regex_patterns) {
+                std::cmatch match;
+                if (!std::regex_search(line, match, pattern)) {
+                    matches_all = false;
+                }
+                if (!matches_all) {
+                    break;
+                }
             }
         }
         if (matches_all) {
@@ -157,17 +174,21 @@ static void report_results(const fs::path &current_path, std::vector<TextRef> &r
 
 int main(int argc, char **argv)
 {
+    bool option_e = false;
     bool option_i = false;
     bool option_r = false;
     bool option_s = false;
 
     while (1) {
         int option_index = 0;
-        int c = getopt_long(argc, argv, "hirsv", long_options, &option_index);
+        int c = getopt_long(argc, argv, "ehirsv", long_options, &option_index);
         if (c == -1)
             break;
     
         switch (c) {
+            case 'e':
+                option_e = true;
+                break;
             case 'h':
                 usage();
                 return 0;            
@@ -203,39 +224,37 @@ int main(int argc, char **argv)
         replace = argv[argc - 1];        
     }    
 
-    std::vector<std::string> search_patterns;
+    std::vector<std::string> string_patterns;
+    std::vector<std::regex> regex_patterns;
+
+    std::regex::flag_type regex_flags = std::regex::grep | std::regex::optimize;
+    if (option_i) {
+        regex_flags |= std::regex::icase;
+    }
 
     int pattern_count = option_r ? argc - 1 : argc;
     for (int i = optind; i < pattern_count; i++) {
         const char *arg = argv[i];
-        search_patterns.push_back(arg);
-    //     if (arg_is_pattern(arg)) {
-    //         char *pat = strdup(arg+1);
-    //         pat[strlen(pat)-1] = '\0';
-    //         if (strlen(pat)) {
-    //             std::regex::flag_type regex_flags = basic | optimize;
-    //             if (option_i)
-    //                 regex_flags |= icase;
-    //             search_patterns.push_back(SearchPattern(SearchPattern::ERegexType, pat, regex(pat, regex_flags)));
-    //         }
-    //     }
-    //     else if (arg_is_file_pattern(arg)) {
-    //         char *pat = strdup(arg+1);
-    //         pat[strlen(pat)-1] = '\0';
-    //         if (strlen(pat))
-    //             file_patterns.push_back(pat);
-    //     }
+        if (option_e) {
+            regex_patterns.push_back(std::regex(arg, regex_flags));
+        }
+        else {
+            string_patterns.push_back(arg);
+        }
     //     else if (option_r && option_i) {
     //         // Strings which are case-insensive are treated like regexes when replacing.
     //         // Easier to implement that way.
     //         std::regex::flag_type regex_flags = basic | optimize | icase;
-    //         search_patterns.push_back(SearchPattern(SearchPattern::ERegexType, arg, regex(arg, regex_flags)));
+    //         string_patterns.push_back(SearchPattern(SearchPattern::ERegexType, arg, regex(arg, regex_flags)));
     //     }
     //     else {
-            // search_patterns.push_back(arg);
+            // string_patterns.push_back(arg);
     //     }
     }
     
+    std::cout << "string_patterns.size: " << string_patterns.size() << std::endl;
+    std::cout << "regex_patterns.size:  " << regex_patterns.size() << std::endl;
+
     fs::path current_path = fs::current_path();
     const auto &file_list = build_file_list(current_path);
     int search_flags = option_i ? CaseInsensitiveSearch : CaseSensitiveSearch;
@@ -256,13 +275,13 @@ int main(int argc, char **argv)
 
     for (const auto &path : file_list) {
         if (option_r) {
-            // vector<TextRef> file_results(fts_search_replace(path, search_patterns, replace, flags));
+            // vector<TextRef> file_results(fts_search_replace(path, string_patterns, replace, flags));
             // found.insert(found.end(), file_results.begin(), file_results.end());
         }
         else {
             dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
                 // dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
-                std::vector<TextRef> file_results(search_file(path, search_patterns, search_flags));
+                std::vector<TextRef> file_results(search_file(path, string_patterns, regex_patterns, search_flags));
                 dispatch_async(completion_queue, ^{
                     completion_block(file_results);    
                 });
