@@ -263,9 +263,7 @@ int main(int argc, char **argv)
     __block int completions = 0;
     const size_t expected_completions = file_list.size();
     dispatch_queue_t completion_queue = dispatch_queue_create("search-tool", DISPATCH_QUEUE_SERIAL);
-    // dispatch_semaphore_t semaphore = dispatch_semaphore_create(8);
     void (^completion_block)(const std::vector<TextRef> &) = ^void(const std::vector<TextRef> &file_results) {
-        // dispatch_semaphore_signal(semaphore);
         found.insert(found.end(), file_results.begin(), file_results.end());
         completions++;
         if (completions == expected_completions) {
@@ -280,7 +278,6 @@ int main(int argc, char **argv)
         }
         else {
             dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-                // dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
                 std::vector<TextRef> file_results(search_file(path, string_patterns, regex_patterns, search_flags));
                 dispatch_async(completion_queue, ^{
                     completion_block(file_results);    
