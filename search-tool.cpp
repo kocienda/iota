@@ -30,41 +30,28 @@ enum class Mode { Search, SearchAndReplace };
 enum class HighlightColor {
     None = 0,
     Black = 30,
-    Red = 31,
-    Green = 32,
-    Yellow = 33,
-    Blue = 34,
-    Magenta = 35,
-    Cyan = 36,
-    White = 37,
-    BrightBlack = 90,
-    BrightRed = 91,
-    BrightGreen = 92,
-    BrightYellow = 93,
-    BrightBlue = 94,
-    BrightMagenta = 95,
-    BrightCyan = 96,
-    BrightWhite = 97,
+    Gray = 90,
+    Red = 91,
+    Green = 92,
+    Yellow = 93,
+    Blue = 94,
+    Magenta = 95,
+    Cyan = 96,
+    White = 97,
 };
 
 static HighlightColor highlight_color_from_string(const std::string &s)
 {
     std::map<std::string, HighlightColor> highlight_colors = {
         {"black", HighlightColor::Black},
+        {"gray", HighlightColor::Gray},
         {"red", HighlightColor::Red},
         {"green", HighlightColor::Green},
         {"yellow", HighlightColor::Yellow},
         {"blue", HighlightColor::Blue},
         {"magenta", HighlightColor::Magenta},
+        {"cyan", HighlightColor::Cyan},
         {"white", HighlightColor::White},
-        {"brightblack", HighlightColor::BrightBlack},
-        {"brightred", HighlightColor::BrightRed},
-        {"brightgreen", HighlightColor::BrightGreen},
-        {"brightyellow", HighlightColor::BrightYellow},
-        {"brightblue", HighlightColor::BrightBlue},
-        {"brightmagenta", HighlightColor::BrightMagenta},
-        {"brightcyan", HighlightColor::BrightCyan},
-        {"brightwhite", HighlightColor::BrightWhite},
     };
 
     const auto r = highlight_colors.find(s);
@@ -282,7 +269,8 @@ std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType mat
     return results;
 }
 
-static void report_results(const fs::path &current_path, std::vector<TextRef> &results, HighlightColor highlight_color) {
+static void output_results(const fs::path &current_path, std::vector<TextRef> &results, HighlightColor highlight_color) 
+{
     std::sort(results.begin(), results.end(), std::less<TextRef>());
     int count = 1;
     for (auto &ref : results) {
@@ -322,14 +310,15 @@ static void usage(void)
     puts("");
     puts("Options:");
     puts("    -a : Matches any needle given, rather than requiring a line to match all needles.");
-    puts("    -c : Print results with the given highlight color. Implies printing to a terminal.");
-    puts("         ");
+    puts("    -c <color>: Highlights results with the given color. Implies output to a terminal.");
+    puts("                colors: black, gray, red, green, yellow, blue, magenta, cyan, white");
+    puts(" ");
     puts("    -e : Search needles are compiles as regular expressions.");
     puts("    -h : Prints this help message.");
     puts("    -i : Case insensitive search.");
     puts("    -r : Search and replace. Takes two arguments: <search> <replacement>");
-    puts("                             <search> can be a string or a regex (when invoked with -e)");
-    puts("                             <replacement> is always treated as a string");
+    puts("             <search> can be a string or a regex (when invoked with -e)");
+    puts("             <replacement> is always treated as a string");
     puts("    -s : Search for files in all directories, including those in ENV['SKIPPABLES_PATH'].");
     puts("    -v : Prints the program version.");
 }
@@ -463,7 +452,7 @@ int main(int argc, char **argv)
         found.insert(found.end(), file_results.begin(), file_results.end());
         completions++;
         if (completions == expected_completions) {
-            report_results(current_path, found, highlight_color);
+            output_results(current_path, found, highlight_color);
         }
     };
 
