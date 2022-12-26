@@ -3,7 +3,9 @@
 //
 
 #include <algorithm>
+#include <cstring>
 #include <fstream>
+#include <map>
 #include <regex>
 #include <set>
 #include <string>
@@ -21,43 +23,53 @@ namespace fs = std::filesystem;
 
 using UU::TextRef;
 
-static void version(void)
-{
-    puts("search : version 4.0");
-}
-
-static void usage(void)
-{
-    version();
-    puts("");
-    puts("Usage: search [options] <search-string>...");
-    puts("");
-    puts("Options:");
-    puts("    -a : Matches any needle given, rather than requiring a line to match all needles.");
-    puts("    -e : Search needles are compiles as regular expressions.");
-    puts("    -h : Prints this help message.");
-    puts("    -i : Case insensitive search.");
-    puts("    -r : Replace found search needles with last argument on command line (which is treated as a string).");
-    puts("    -s : Search for files in all directories, including those in ENV['SKIPPABLES_PATH'].");
-    puts("    -v : Prints the program version.");
-}
-
-static struct option long_options[] =
-{
-    {"all-needles",      no_argument,  0, 'a'},
-    {"regex-search",      no_argument,  0, 'e'},
-    {"help",              no_argument,  0, 'h'},
-    {"case-insensitive",  no_argument,  0, 'i'},
-    {"replace",           no_argument,  0, 'r'},
-    {"search-skippables", no_argument,  0, 's'},
-    {"version",           no_argument,  0, 'v'},
-    {0, 0, 0, 0}
-};
-
 enum class MatchType { All, Any };
 enum class SearchCase { Sensitive, Insensitive };
 enum class Skip { SkipNone, SkipSkippables };
 enum class Mode { Search, SearchAndReplace };
+enum class HighlightColor {
+    None = 0,
+    Black = 30,
+    Red = 31,
+    Green = 32,
+    Yellow = 33,
+    Blue = 34,
+    Magenta = 35,
+    Cyan = 36,
+    White = 37,
+    BrightBlack = 90,
+    BrightRed = 91,
+    BrightGreen = 92,
+    BrightYellow = 93,
+    BrightBlue = 94,
+    BrightMagenta = 95,
+    BrightCyan = 96,
+    BrightWhite = 97,
+};
+
+static HighlightColor highlight_color_from_string(const std::string &s)
+{
+    std::map<std::string, HighlightColor> highlight_colors = {
+        {"black", HighlightColor::Black},
+        {"red", HighlightColor::Red},
+        {"green", HighlightColor::Green},
+        {"yellow", HighlightColor::Yellow},
+        {"blue", HighlightColor::Blue},
+        {"magenta", HighlightColor::Magenta},
+        {"white", HighlightColor::White},
+        {"brightblack", HighlightColor::BrightBlack},
+        {"brightred", HighlightColor::BrightRed},
+        {"brightgreen", HighlightColor::BrightGreen},
+        {"brightyellow", HighlightColor::BrightYellow},
+        {"brightblue", HighlightColor::BrightBlue},
+        {"brightmagenta", HighlightColor::BrightMagenta},
+        {"brightcyan", HighlightColor::BrightCyan},
+        {"brightwhite", HighlightColor::BrightWhite},
+    };
+
+    const auto r = highlight_colors.find(s);
+    return r == highlight_colors.end() ? HighlightColor::None : r->second;
+}
 
 static std::vector<fs::path> build_file_list(const fs::path &dir, Skip skip = Skip::SkipSkippables)
 {
@@ -111,8 +123,8 @@ class Match
 {
 public:
     Match() {}
-    Match(size_t needle_index, size_t match_start_index, size_t match_length) : 
-        m_needle_index(needle_index), m_match_start_index(match_start_index), m_match_length(match_length) {}
+    Match(size_t needle_index, size_t match_start_index, size_t match_extent) : 
+        m_needle_index(needle_index), m_match_start_index(match_start_index), m_match_extent(match_extent) {}
 
     size_t needle_index() const { return m_needle_index; }
     void set_needle_index(size_t needle_index) { m_needle_index = needle_index; }
@@ -120,8 +132,8 @@ public:
     size_t match_start_index() const { return m_match_start_index; }
     void set_match_start_index(size_t match_start_index) { m_match_start_index = match_start_index; }
 
-    size_t match_length() const { return m_match_length; }
-    void set_match_length(size_t match_length) { m_match_length = match_length; }
+    size_t match_extent() const { return m_match_extent; }
+    void set_match_extent(size_t match_extent) { m_match_extent = match_extent; }
 
     size_t line_start_index() const { return m_line_start_index; }
     void set_line_start_index(size_t line_start_index) { m_line_start_index = line_start_index; }
@@ -138,7 +150,7 @@ public:
 private:
     size_t m_needle_index = 0;
     size_t m_match_start_index = 0;
-    size_t m_match_length = 0;
+    size_t m_match_extent = 0;
     size_t m_line_start_index = 0;
     size_t m_line_length = 0;
     size_t m_line_number = 0;
@@ -255,23 +267,29 @@ std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType mat
         matches = filtered_matches;
     }
 
-    for (auto &match : matches) {
-        // extract the string from each line and add a TextRef
-        size_t index = results.size() + 1;
-        std::string line = std::string(source.substr(match.line_start_index(), match.line_length()));
-        results.push_back(TextRef(index, path, match.line_number(), match.column_number(), line));
+    if (mode == Mode::Search) {
+        // add a TextRef for each match
+        for (auto &match : matches) {
+            size_t index = results.size() + 1;
+            std::string line = std::string(source.substr(match.line_start_index(), match.line_length()));
+            results.push_back(TextRef(index, path, match.line_number(), match.column_number(), match.match_extent(), line));
+        }
+        return results;
     }
+
+    ASSERT(mode == Mode::SearchAndReplace);
 
     return results;
 }
 
-static void report_results(const fs::path &current_path, std::vector<TextRef> &results) {
+static void report_results(const fs::path &current_path, std::vector<TextRef> &results, HighlightColor highlight_color) {
     std::sort(results.begin(), results.end(), std::less<TextRef>());
     int count = 1;
     for (auto &ref : results) {
         ref.set_index(count);
         count++;
-        std::cout << ref.to_string(TextRef::AllFeatures, TextRef::FilenameFormat::RELATIVE, current_path) << std::endl;
+        std::cout << ref.to_string(TextRef::AllFeatures, 
+            TextRef::FilenameFormat::RELATIVE, current_path, static_cast<int>(highlight_color)) << std::endl;
     }
 
     const char *refs_path = getenv("REFS_PATH");
@@ -282,7 +300,7 @@ static void report_results(const fs::path &current_path, std::vector<TextRef> &r
             for (auto ref : results) {
                 ref.set_index(count);
                 count++;
-                std::string str = ref.to_string(TextRef::AllFeatures, TextRef::FilenameFormat::ABSOLUTE);
+                std::string str = ref.to_string(TextRef::StandardFeatures, TextRef::FilenameFormat::ABSOLUTE);
                 file << str << std::endl;
             }
         } 
@@ -290,6 +308,44 @@ static void report_results(const fs::path &current_path, std::vector<TextRef> &r
 
     exit(0);
 }
+
+static void version(void)
+{
+    puts("search : version 4.0");
+}
+
+static void usage(void)
+{
+    version();
+    puts("");
+    puts("Usage: search [options] <search-string>...");
+    puts("");
+    puts("Options:");
+    puts("    -a : Matches any needle given, rather than requiring a line to match all needles.");
+    puts("    -c : Print results with the given highlight color. Implies printing to a terminal.");
+    puts("         ");
+    puts("    -e : Search needles are compiles as regular expressions.");
+    puts("    -h : Prints this help message.");
+    puts("    -i : Case insensitive search.");
+    puts("    -r : Search and replace. Takes two arguments: <search> <replacement>");
+    puts("                             <search> can be a string or a regex (when invoked with -e)");
+    puts("                             <replacement> is always treated as a string");
+    puts("    -s : Search for files in all directories, including those in ENV['SKIPPABLES_PATH'].");
+    puts("    -v : Prints the program version.");
+}
+
+static struct option long_options[] =
+{
+    {"all-needles",       no_argument,       0, 'a'},
+    {"highlight-color",   required_argument, 0, 'c'},
+    {"regex-search",      no_argument,       0, 'e'},
+    {"help",              no_argument,       0, 'h'},
+    {"case-insensitive",  no_argument,       0, 'i'},
+    {"replace",           no_argument,       0, 'r'},
+    {"search-skippables", no_argument,       0, 's'},
+    {"version",           no_argument,       0, 'v'},
+    {0, 0, 0, 0}
+};
 
 int main(int argc, char **argv)
 {
@@ -299,15 +355,20 @@ int main(int argc, char **argv)
     bool option_r = false;
     bool option_s = false;
 
+    std::string option_c = "";
+
     while (1) {
         int option_index = 0;
-        int c = getopt_long(argc, argv, "aehirsv", long_options, &option_index);
+        int c = getopt_long(argc, argv, "ac:ehirsv", long_options, &option_index);
         if (c == -1)
             break;
     
         switch (c) {
             case 'a':
                 option_a = true;
+                break;
+            case 'c':
+                option_c = std::string(optarg);
                 break;
             case 'e':
                 option_e = true;
@@ -341,21 +402,28 @@ int main(int argc, char **argv)
         usage();
         exit(-1);
     }
-
-    std::string replacement;
-    if (option_r) {
-        replacement = argv[argc - 1];        
-    }    
     
     std::vector<std::string> string_needles;
-    std::vector<std::regex> regex_needles;
 
+    std::vector<std::regex> regex_needles;
     std::regex::flag_type regex_flags = std::regex::egrep | std::regex::optimize;
     if (option_i) {
         regex_flags |= std::regex::icase;
     }
 
     int needle_count = option_r ? argc - 1 : argc;
+
+    std::string replacement;
+    if (option_r) {
+        if (needle_count - optind != 1) {
+            usage();
+            puts("");
+            puts("*** search and replace takes exactly two arguments");
+            exit(-1);
+        }
+        replacement = argv[argc - 1];        
+    }    
+
     for (int i = optind; i < needle_count; i++) {
         const char *arg = argv[i];
         if (option_e) {
@@ -373,6 +441,16 @@ int main(int argc, char **argv)
     SearchCase search_case = option_i ? SearchCase::Insensitive : SearchCase::Sensitive;
     MatchType match_type = option_a ? MatchType::Any : MatchType::All;
     Mode mode = option_r ? Mode::SearchAndReplace : Mode::Search;
+    HighlightColor highlight_color = HighlightColor::None;
+    if (option_c.length() > 0) {
+        highlight_color = highlight_color_from_string(option_c);
+        if (highlight_color == HighlightColor::None) {
+            usage();
+            puts("");
+            std::cout << "*** unsupported highlight color: " << option_c << std::endl;
+            exit(-1);
+        }
+    }
 
     fs::path current_path = fs::current_path();
     const auto &file_list = build_file_list(current_path, option_s ? Skip::SkipNone : Skip::SkipSkippables);
@@ -385,7 +463,7 @@ int main(int argc, char **argv)
         found.insert(found.end(), file_results.begin(), file_results.end());
         completions++;
         if (completions == expected_completions) {
-            report_results(current_path, found);
+            report_results(current_path, found, highlight_color);
         }
     };
 
