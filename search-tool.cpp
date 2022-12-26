@@ -33,18 +33,18 @@ static void usage(void)
     puts("Usage: search [options] <search-string>...");
     puts("");
     puts("Options:");
-    puts("    -a : Matches any pattern given, rather than requiring a line to match all patterns.");
-    puts("    -e : Search pattern is a regular expression.");
+    puts("    -a : Matches any needle given, rather than requiring a line to match all needles.");
+    puts("    -e : Search needles are compiles as regular expressions.");
     puts("    -h : Prints this help message.");
     puts("    -i : Case insensitive search.");
-    puts("    -r : Replace found search patterns with last argument on command line (which is treated as a string).");
+    puts("    -r : Replace found search needles with last argument on command line (which is treated as a string).");
     puts("    -s : Search for files in all directories, including those in ENV['SKIPPABLES_PATH'].");
     puts("    -v : Prints the program version.");
 }
 
 static struct option long_options[] =
 {
-    {"all-patterns",      no_argument,  0, 'a'},
+    {"all-needles",      no_argument,  0, 'a'},
     {"regex-search",      no_argument,  0, 'e'},
     {"help",              no_argument,  0, 'h'},
     {"case-insensitive",  no_argument,  0, 'i'},
@@ -110,12 +110,12 @@ std::vector<size_t> find_line_ending_offsets(const std::string_view &str, size_t
 class Match
 {
 public:
-    constexpr Match() {}
-    Match(size_t pattern_index, size_t match_start_index, size_t match_length) : 
-        m_pattern_index(pattern_index), m_match_start_index(match_start_index), m_match_length(match_length) {}
+    Match() {}
+    Match(size_t needle_index, size_t match_start_index, size_t match_length) : 
+        m_needle_index(needle_index), m_match_start_index(match_start_index), m_match_length(match_length) {}
 
-    size_t pattern_index() const { return m_pattern_index; }
-    void set_pattern_index(size_t pattern_index) { m_pattern_index = pattern_index; }
+    size_t needle_index() const { return m_needle_index; }
+    void set_needle_index(size_t needle_index) { m_needle_index = needle_index; }
 
     size_t match_start_index() const { return m_match_start_index; }
     void set_match_start_index(size_t match_start_index) { m_match_start_index = match_start_index; }
@@ -136,7 +136,7 @@ public:
     void set_column_number(size_t column_number) { m_column_number = column_number; }
 
 private:
-    size_t m_pattern_index = 0;
+    size_t m_needle_index = 0;
     size_t m_match_start_index = 0;
     size_t m_match_length = 0;
     size_t m_line_start_index = 0;
@@ -146,7 +146,7 @@ private:
 };
 
 std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType match_type, 
-    const std::vector<std::string> &string_patterns, SearchCase search_case, const std::vector<std::regex> &regex_patterns, 
+    const std::vector<std::string> &string_needles, SearchCase search_case, const std::vector<std::regex> &regex_needles, 
     const std::string &replacement)
 {
     std::vector<TextRef> results;
@@ -169,39 +169,39 @@ std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType mat
 
     std::vector<Match> matches;
 
-    size_t pattern_index = 0;
-    for (const auto &string_pattern : string_patterns) {
-        const auto searcher = std::boyer_moore_searcher(string_pattern.begin(), string_pattern.end());
+    size_t needle_index = 0;
+    for (const auto &string_needle : string_needles) {
+        const auto searcher = std::boyer_moore_searcher(string_needle.begin(), string_needle.end());
         auto hit = haystack.begin();
         while (true) {
             auto it = std::search(hit, haystack.end(), searcher);
             if (it == haystack.end()) {
                 break;
             }
-            matches.emplace_back(pattern_index, it - haystack.begin(), string_pattern.length());
+            matches.emplace_back(needle_index, it - haystack.begin(), string_needle.length());
             hit = ++it;
         }
-        pattern_index++;
+        needle_index++;
     }
 
-    for (const auto &regex_pattern : regex_patterns) {
-        const auto searcher_begin = std::cregex_iterator(haystack.begin(), haystack.end(), regex_pattern);
+    for (const auto &regex_needle : regex_needles) {
+        const auto searcher_begin = std::cregex_iterator(haystack.begin(), haystack.end(), regex_needle);
         auto searcher_end = std::cregex_iterator();
         for (auto it = searcher_begin; it != searcher_end; ++it) {
             const auto &match = *it;                                                 
-            matches.emplace_back(pattern_index, match.position(), match.length());
+            matches.emplace_back(needle_index, match.position(), match.length());
         }   
-        pattern_index++;
+        needle_index++;
     }
 
     if (matches.size() == 0) {
         return results;
     }
 
-    // code below needs patterns sorted by start index,
-    // but only do the work if there is more than one pattern
-    size_t pattern_count = string_patterns.size() + regex_patterns.size();
-    if (pattern_count > 1) {
+    // code below needs needles sorted by start index,
+    // but only do the work if there is more than one needle
+    size_t needle_count = string_needles.size() + regex_needles.size();
+    if (needle_count > 1) {
         std::sort(matches.begin(), matches.end(), [](const Match &a, const Match &b) { 
             return a.match_start_index() < b.match_start_index(); 
         });
@@ -223,12 +223,12 @@ std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType mat
         match.set_column_number(match.match_start_index() - sidx + 1);
     }
 
-    // if MatchType is All and there's more than one pattern, 
-    // filter each line's worth of matches to ensure each pattern matches
-    if (match_type == MatchType::All && pattern_count > 1) {
+    // if MatchType is All and there's more than one needle, 
+    // filter each line's worth of matches to ensure each needle matches
+    if (match_type == MatchType::All && needle_count > 1) {
         std::vector<Match> filtered_matches;
         size_t current_line = 0;
-        std::set<size_t> matched_pattern_indexes;
+        std::set<size_t> matched_needle_indexes;
         size_t sidx = 0;
         size_t idx = 0;
         for (const auto &match : matches) {
@@ -236,27 +236,27 @@ std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType mat
                 current_line = match.line_number();    
             }
             if (current_line == match.line_number()) {
-                matched_pattern_indexes.insert(match.pattern_index());
+                matched_needle_indexes.insert(match.needle_index());
             }
             else {
-                if (matched_pattern_indexes.size() == pattern_count) {
+                if (matched_needle_indexes.size() == needle_count) {
                     filtered_matches.insert(filtered_matches.end(), matches.begin() + sidx, matches.begin() + idx);
                 }
                 current_line = match.line_number();
-                matched_pattern_indexes.clear();
-                matched_pattern_indexes.insert(match.pattern_index());
+                matched_needle_indexes.clear();
+                matched_needle_indexes.insert(match.needle_index());
                 sidx = idx;
             }
             idx++;
         }
-        if (matched_pattern_indexes.size() == pattern_count) {
+        if (matched_needle_indexes.size() == needle_count) {
             filtered_matches.insert(filtered_matches.end(), matches.begin() + sidx, matches.begin() + idx);
         }
         matches = filtered_matches;
     }
 
     for (auto &match : matches) {
-        // extract the string and add the result
+        // extract the string from each line and add a TextRef
         size_t index = results.size() + 1;
         std::string line = std::string(source.substr(match.line_start_index(), match.line_length()));
         results.push_back(TextRef(index, path, match.line_number(), match.column_number(), line));
@@ -347,26 +347,26 @@ int main(int argc, char **argv)
         replacement = argv[argc - 1];        
     }    
     
-    std::vector<std::string> string_patterns;
-    std::vector<std::regex> regex_patterns;
+    std::vector<std::string> string_needles;
+    std::vector<std::regex> regex_needles;
 
     std::regex::flag_type regex_flags = std::regex::egrep | std::regex::optimize;
     if (option_i) {
         regex_flags |= std::regex::icase;
     }
 
-    int pattern_count = option_r ? argc - 1 : argc;
-    for (int i = optind; i < pattern_count; i++) {
+    int needle_count = option_r ? argc - 1 : argc;
+    for (int i = optind; i < needle_count; i++) {
         const char *arg = argv[i];
         if (option_e) {
-            regex_patterns.push_back(std::regex(arg, regex_flags));
+            regex_needles.push_back(std::regex(arg, regex_flags));
         }
         else {
-            std::string pattern(arg);
+            std::string needle(arg);
             if (option_i) {
-                std::transform(pattern.cbegin(), pattern.cend(), pattern.begin(), [](unsigned char c) { return std::tolower(c); });    
+                std::transform(needle.cbegin(), needle.cend(), needle.begin(), [](unsigned char c) { return std::tolower(c); });    
             }
-            string_patterns.push_back(pattern);
+            string_needles.push_back(needle);
         }
     }
     
@@ -391,7 +391,7 @@ int main(int argc, char **argv)
 
     for (const auto &path : file_list) {
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-            std::vector<TextRef> file_results = process_file(path, mode, match_type, string_patterns, search_case, regex_patterns, replacement);
+            std::vector<TextRef> file_results = process_file(path, mode, match_type, string_needles, search_case, regex_needles, replacement);
             dispatch_async(completion_queue, ^{
                 completion_block(file_results);    
             });
