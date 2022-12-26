@@ -1,5 +1,7 @@
 {
     "C_Cpp.default.cppStandard": "c++17",
     "C_Cpp.default.cStandard": "c17",
-    "C_Cpp.default.intelliSenseMode": "clang-arm64"
+    "C_Cpp.default.intelliSenseMode": "clang-arm64",
+    "C_Cpp.errorSquiggles": "disabled",
+    "editor.hover.enabled" : false
 }
