@@ -110,8 +110,8 @@ class Match
 {
 public:
     Match() {}
-    Match(size_t needle_index, size_t match_start_index, size_t match_extent) : 
-        m_needle_index(needle_index), m_match_start_index(match_start_index), m_match_extent(match_extent) {}
+    Match(size_t needle_index, size_t match_start_index, size_t match_length) : 
+        m_needle_index(needle_index), m_match_start_index(match_start_index), m_match_length(match_length) {}
 
     size_t needle_index() const { return m_needle_index; }
     void set_needle_index(size_t needle_index) { m_needle_index = needle_index; }
@@ -119,8 +119,8 @@ public:
     size_t match_start_index() const { return m_match_start_index; }
     void set_match_start_index(size_t match_start_index) { m_match_start_index = match_start_index; }
 
-    size_t match_extent() const { return m_match_extent; }
-    void set_match_extent(size_t match_extent) { m_match_extent = match_extent; }
+    size_t match_length() const { return m_match_length; }
+    void set_match_length(size_t match_length) { m_match_length = match_length; }
 
     size_t line_start_index() const { return m_line_start_index; }
     void set_line_start_index(size_t line_start_index) { m_line_start_index = line_start_index; }
@@ -128,20 +128,20 @@ public:
     size_t line_length() const { return m_line_length; }
     void set_line_length(size_t line_length) { m_line_length = line_length; }
 
-    size_t line_number() const { return m_line_number; }
-    void set_line_number(size_t line_number) { m_line_number = line_number; }
+    size_t line() const { return m_line; }
+    void set_line(size_t line) { m_line = line; }
 
-    size_t column_number() const { return m_column_number; }
-    void set_column_number(size_t column_number) { m_column_number = column_number; }
+    size_t column() const { return m_column; }
+    void set_column(size_t column) { m_column = column; }
 
 private:
     size_t m_needle_index = 0;
     size_t m_match_start_index = 0;
-    size_t m_match_extent = 0;
+    size_t m_match_length = 0;
     size_t m_line_start_index = 0;
     size_t m_line_length = 0;
-    size_t m_line_number = 0;
-    size_t m_column_number = 0;
+    size_t m_line = 0;
+    size_t m_column = 0;
 };
 
 std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType match_type, 
@@ -208,18 +208,18 @@ std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType mat
 
     // set all the metadata for the match, mostly by finding the line for the match in haystack
     std::vector<size_t> haystack_line_end_offsets = find_line_ending_offsets(haystack, matches.back().match_start_index());
-    size_t line_number = 0;
+    size_t line = 0;
     for (auto &match : matches) {
-        while (haystack_line_end_offsets[line_number] < match.match_start_index()) {
-            line_number++;
-            ASSERT(line_number < haystack_line_end_offsets.size());
+        while (haystack_line_end_offsets[line] < match.match_start_index()) {
+            line++;
+            ASSERT(line < haystack_line_end_offsets.size());
         }
-        size_t sidx = line_number == 0 ? 0 : (haystack_line_end_offsets[line_number -1] + 1);
-        size_t eidx = haystack_line_end_offsets[line_number];
+        size_t sidx = line == 0 ? 0 : (haystack_line_end_offsets[line -1] + 1);
+        size_t eidx = haystack_line_end_offsets[line];
         match.set_line_start_index(sidx);
         match.set_line_length(eidx - sidx);
-        match.set_line_number(line_number + 1);
-        match.set_column_number(match.match_start_index() - sidx + 1);
+        match.set_line(line + 1);
+        match.set_column(match.match_start_index() - sidx + 1);
     }
 
     // if MatchType is All and there's more than one needle, 
@@ -232,16 +232,16 @@ std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType mat
         size_t idx = 0;
         for (const auto &match : matches) {
             if (current_line == 0) {
-                current_line = match.line_number();    
+                current_line = match.line();    
             }
-            if (current_line == match.line_number()) {
+            if (current_line == match.line()) {
                 matched_needle_indexes.insert(match.needle_index());
             }
             else {
                 if (matched_needle_indexes.size() == needle_count) {
                     filtered_matches.insert(filtered_matches.end(), matches.begin() + sidx, matches.begin() + idx);
                 }
-                current_line = match.line_number();
+                current_line = match.line();
                 matched_needle_indexes.clear();
                 matched_needle_indexes.insert(match.needle_index());
                 sidx = idx;
@@ -259,7 +259,7 @@ std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType mat
         for (auto &match : matches) {
             size_t index = results.size() + 1;
             std::string line = std::string(source.substr(match.line_start_index(), match.line_length()));
-            results.push_back(TextRef(index, path, match.line_number(), match.column_number(), match.match_extent(), line));
+            results.push_back(TextRef(index, path, match.line(), match.column(), match.column() + match.match_length(), line));
         }
         return results;
     }
@@ -276,7 +276,7 @@ static void output_results(const fs::path &current_path, std::vector<TextRef> &r
     for (auto &ref : results) {
         ref.set_index(count);
         count++;
-        std::cout << ref.to_string(TextRef::AllFeatures, 
+        std::cout << ref.to_string(TextRef::ExtendedFeatures, 
             TextRef::FilenameFormat::RELATIVE, current_path, static_cast<int>(highlight_color)) << std::endl;
     }
 
