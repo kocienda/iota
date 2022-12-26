@@ -5,6 +5,7 @@ build
 .cache
 .clangd
 .editorconfig
+.vscode
 
 # Prerequisites
 *.d
