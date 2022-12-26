@@ -6,7 +6,10 @@ build
 .clangd
 .editorconfig
 .vscode
-.code-workspace
+*.code-workspace
+
+# test file
+test.txt
 
 # Prerequisites
 *.d
