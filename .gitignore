@@ -1,6 +1,11 @@
 # cmake build directory
 build
 
+# editing files
+.cache
+.clangd
+.editorconfig
+
 # Prerequisites
 *.d
 
