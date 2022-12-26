@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <fstream>
 #include <regex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -101,7 +102,7 @@ std::vector<size_t> find_line_ending_offsets(const std::string_view &str, size_t
         }
     }
     if (!added_last_line_ending) {
-        result.push_back(str.length() - 1);
+        result.push_back(str.length()); // one after the end
     }
 
     return result;
@@ -123,6 +124,12 @@ public:
     size_t start_index() const { return m_start_index; }
     void set_start_index(size_t start_index) { m_start_index = start_index; }
 
+    size_t line_start_index() const { return m_line_start_index; }
+    void set_line_start_index(size_t line_start_index) { m_line_start_index = line_start_index; }
+
+    size_t line_length() const { return m_line_length; }
+    void set_line_length(size_t line_length) { m_line_length = line_length; }
+
     size_t line_number() const { return m_line_number; }
     void set_line_number(size_t line_number) { m_line_number = line_number; }
 
@@ -133,6 +140,8 @@ private:
     PatternType m_pattern_type = PatternType::None;
     size_t m_pattern_index = 0;
     size_t m_start_index = 0;
+    size_t m_line_start_index = 0;
+    size_t m_line_length = 0;
     size_t m_line_number = 0;
     size_t m_column_number = 0;
 };
@@ -166,7 +175,7 @@ std::vector<TextRef> search_file(const fs::path &path, const std::vector<std::st
 
     std::vector<Match> matches;
 
-    size_t string_pattern_index = 0;
+    size_t pattern_index = 0;
     for (const auto &string_pattern : string_patterns) {
         const auto searcher = std::boyer_moore_searcher(string_pattern.begin(), string_pattern.end());
         auto hit = haystack.begin();
@@ -175,21 +184,20 @@ std::vector<TextRef> search_file(const fs::path &path, const std::vector<std::st
             if (it == haystack.end()) {
                 break;
             }
-            matches.emplace_back(PatternType::String, string_pattern_index, it - haystack.begin());
+            matches.emplace_back(PatternType::String, pattern_index, it - haystack.begin());
             hit = ++it;
         }
-        string_pattern_index++;
+        pattern_index++;
     }
 
-    size_t regex_pattern_index = 0;
     for (const auto &regex_pattern : regex_patterns) {
         const auto searcher_begin = std::cregex_iterator(haystack.begin(), haystack.end(), regex_pattern);
         auto searcher_end = std::cregex_iterator();
         for (auto it = searcher_begin; it != searcher_end; ++it) {
             const auto &match = *it;                                                 
-            matches.emplace_back(PatternType::Regex, regex_pattern_index, match.position());
+            matches.emplace_back(PatternType::Regex, pattern_index, match.position());
         }   
-        regex_pattern_index++;
+        pattern_index++;
     }
 
     if (matches.size() == 0) {
@@ -200,18 +208,59 @@ std::vector<TextRef> search_file(const fs::path &path, const std::vector<std::st
         return a.start_index() < b.start_index(); 
     });
 
+    // set all the metadata for the match, mostly by finding the line for the match in haystack
     std::vector<size_t> haystack_line_end_offsets = find_line_ending_offsets(haystack, matches.back().start_index());
     size_t line_number = 0;
-    for (const auto &match : matches) {
-        // find the line that contains the match start index
+    for (auto &match : matches) {
         while (haystack_line_end_offsets[line_number] < match.start_index()) {
             line_number++;
             ASSERT(line_number < haystack_line_end_offsets.size());
         }
         size_t sidx = line_number == 0 ? 0 : (haystack_line_end_offsets[line_number -1] + 1);
         size_t eidx = haystack_line_end_offsets[line_number];
-        std::string line = std::string(haystack.substr(sidx, eidx - sidx));
-        add_line_to_results(path, line_number + 1, match.start_index() - sidx + 1, line, results);
+        match.set_line_start_index(sidx);
+        match.set_line_length(eidx - sidx);
+        match.set_line_number(line_number + 1);
+        match.set_column_number(match.start_index() - sidx + 1);
+    }
+
+    // if MatchType is All and there's more than one pattern, 
+    // filter each line's worth of matches to ensure each pattern matches
+    size_t pattern_count = string_patterns.size() + regex_patterns.size();
+    if (match_type == MatchType::All && pattern_count > 1) {
+        std::vector<Match> filtered_matches;
+        size_t current_line = 0;
+        std::set<size_t> matched_pattern_indexes;
+        size_t sidx = 0;
+        size_t idx = 0;
+        for (const auto &match : matches) {
+            if (current_line == 0) {
+                current_line = match.line_number();    
+            }
+            if (current_line == match.line_number()) {
+                matched_pattern_indexes.insert(match.pattern_index());
+            }
+            else {
+                if (matched_pattern_indexes.size() == pattern_count) {
+                    filtered_matches.insert(filtered_matches.end(), matches.begin() + sidx, matches.begin() + idx);
+                }
+                current_line = match.line_number();
+                matched_pattern_indexes.clear();
+                matched_pattern_indexes.insert(match.pattern_index());
+                sidx = idx;
+            }
+            idx++;
+        }
+        if (matched_pattern_indexes.size() == pattern_count) {
+            filtered_matches.insert(filtered_matches.end(), matches.begin() + sidx, matches.begin() + idx);
+        }
+        matches = filtered_matches;
+    }
+
+    for (auto &match : matches) {
+        // extract the string and add the result
+        std::string line = std::string(haystack.substr(match.line_start_index(), match.line_length()));
+        add_line_to_results(path, match.line_number(), match.column_number(), line, results);
     }
 
     return results;
