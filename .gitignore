@@ -6,6 +6,7 @@ build
 .clangd
 .editorconfig
 .vscode
+.code-workspace
 
 # Prerequisites
 *.d

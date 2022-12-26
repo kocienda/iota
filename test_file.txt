@@ -1,9 +1,0 @@
-foo bar
-bar
-quux
-here is the test of Berlinstraße case
-the bar this is a test foo of the code
-not a foo
-A case FOO Bar test
-FOO line
-İStanbul
