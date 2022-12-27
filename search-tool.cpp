@@ -5,13 +5,14 @@
 #include <algorithm>
 #include <cstring>
 #include <fstream>
+#include <future>
+#include <iostream>
 #include <map>
 #include <regex>
 #include <set>
 #include <string>
 #include <vector>
 
-#include <dispatch/dispatch.h>
 #include <getopt.h>
 #include <stdio.h>
 
@@ -41,6 +42,52 @@ enum class HighlightColor {
     White = 97,
 };
 enum class MergeSpans { No, Yes };
+
+class Env
+{
+public:
+    Env(const fs::path &current_path,
+        const std::vector<std::string> &string_needles,
+        const std::vector<std::regex> &regex_needles,
+        const std::string &replacement,
+        HighlightColor highlight_color,
+        MatchType match_type,
+        MergeSpans merge_spans,
+        Mode mode,
+        SearchCase search_case) :
+        m_current_path(current_path),
+        m_string_needles(string_needles),
+        m_regex_needles(regex_needles),
+        m_replacement(replacement),
+        m_highlight_color(highlight_color),
+        m_match_type(match_type),
+        m_merge_spans(merge_spans),
+        m_mode(mode),
+        m_search_case(search_case) 
+    {}
+
+    const fs::path &current_path() const { return m_current_path; }
+    const std::vector<std::string> &string_needles() const { return m_string_needles; }
+    const std::vector<std::regex> &regex_needles() const { return m_regex_needles; }
+    const std::string &replacement() const { return m_replacement; }
+    HighlightColor highlight_color() const { return m_highlight_color; }
+    MatchType match_type() const { return m_match_type; }
+    MergeSpans merge_spans() const { return m_merge_spans; }
+    Mode mode() const { return m_mode; }
+    SearchCase search_case() const { return m_search_case; }
+
+private:
+    fs::path m_current_path;
+    std::vector<std::string> m_string_needles;
+    std::vector<std::regex> m_regex_needles;
+    std::string m_replacement;
+    std::vector<TextRef> m_text_refs;
+    HighlightColor m_highlight_color;
+    MatchType m_match_type;
+    MergeSpans m_merge_spans;
+    Mode m_mode;
+    SearchCase m_search_case;
+};
 
 static HighlightColor highlight_color_from_string(const std::string &s)
 {
@@ -146,9 +193,7 @@ private:
     size_t m_column = 0;
 };
 
-std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType match_type, 
-    const std::vector<std::string> &string_needles, SearchCase search_case, const std::vector<std::regex> &regex_needles, 
-    const std::string &replacement, MergeSpans merge_spans)
+std::vector<TextRef> process_file(const fs::path &path, const Env &env)
 {
     std::vector<TextRef> results;
 
@@ -161,7 +206,7 @@ std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType mat
     std::string_view haystack((char *)mapped_file.base(), mapped_file.file_length());
     std::string case_folded_string;
 
-    if (search_case == SearchCase::Insensitive) {
+    if (env.search_case() == SearchCase::Insensitive) {
         case_folded_string = std::string(haystack);
         std::transform(case_folded_string.cbegin(), case_folded_string.cend(), case_folded_string.begin(), 
             [](unsigned char c) { return std::tolower(c); });
@@ -171,7 +216,7 @@ std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType mat
     std::vector<Match> matches;
 
     size_t needle_index = 0;
-    for (const auto &string_needle : string_needles) {
+    for (const auto &string_needle : env.string_needles()) {
         const auto searcher = std::boyer_moore_searcher(string_needle.begin(), string_needle.end());
         auto hit = haystack.begin();
         while (true) {
@@ -185,7 +230,7 @@ std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType mat
         needle_index++;
     }
 
-    for (const auto &regex_needle : regex_needles) {
+    for (const auto &regex_needle : env.regex_needles()) {
         const auto searcher_begin = std::cregex_iterator(haystack.begin(), haystack.end(), regex_needle);
         auto searcher_end = std::cregex_iterator();
         for (auto it = searcher_begin; it != searcher_end; ++it) {
@@ -201,7 +246,7 @@ std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType mat
 
     // code below needs needles sorted by start index,
     // but only do the work if there is more than one needle
-    size_t needle_count = string_needles.size() + regex_needles.size();
+    size_t needle_count = env.string_needles().size() + env.regex_needles().size();
     if (needle_count > 1) {
         std::sort(matches.begin(), matches.end(), [](const Match &a, const Match &b) { 
             return a.match_start_index() < b.match_start_index(); 
@@ -226,7 +271,7 @@ std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType mat
 
     // if MatchType is All and there's more than one needle, 
     // filter each line's worth of matches to ensure each needle matches
-    if (match_type == MatchType::All && needle_count > 1) {
+    if (env.match_type() == MatchType::All && needle_count > 1) {
         std::vector<Match> filtered_matches;
         size_t current_line = 0;
         std::set<size_t> matched_needle_indexes;
@@ -260,7 +305,7 @@ std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType mat
         return results;
     }
 
-    if (mode == Mode::Search) {
+    if (env.mode() == Mode::Search) {
         // add a TextRef for each match
         for (auto &match : matches) {
             size_t index = results.size() + 1;
@@ -270,19 +315,19 @@ std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType mat
         return results;
     }
 
-    ASSERT(mode == Mode::SearchAndReplace);
+    ASSERT(env.mode() == Mode::SearchAndReplace);
 
     // set up a string to hold the new string after the search and replace operation
     // estimate the size by adding the length of the replacement for each match
     std::string output;
-    output.reserve(source.length() + (matches.size() * replacement.length()));
+    output.reserve(source.length() + (matches.size() * env.replacement().length()));
 
     std::string output_line;
 
     size_t source_index = 0;
     for (auto &match : matches) {
         output += source.substr(source_index, match.match_start_index() - source_index);
-        output += replacement;
+        output += env.replacement();
         source_index += (match.match_start_index() - source_index);
         source_index += match.match_length();
         size_t index = results.size() + 1;
@@ -290,12 +335,12 @@ std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType mat
         std::string_view source_line = std::string_view(source.substr(match.line_start_index(), match.line_length()));
         output_line.clear();
         size_t line_length = source_line.length();
-        if (replacement.length() > match.match_length()) {
-            line_length += replacement.length() - match.match_length();
+        if (env.replacement().length() > match.match_length()) {
+            line_length += env.replacement().length() - match.match_length();
         }
         output_line.reserve(line_length);
         output_line += source_line.substr(0, match.column() - 1);
-        output_line += replacement;
+        output_line += env.replacement();
         if (match.column() - 1 + match.match_length() < source_line.length()) {
             LOG(General, "*** append: %ld : %ld", source_line.length(), match.column() + match.match_length());
             output_line += source_line.substr(match.column() - 1 + match.match_length());
@@ -310,22 +355,24 @@ std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType mat
     return results;
 }
 
-static void output_refs(const fs::path &current_path, Mode mode, std::vector<TextRef> &refs, HighlightColor highlight_color, MergeSpans merge_spans) 
+static void output_refs(const Env &env, std::vector<TextRef> &refs) 
 {
     std::sort(refs.begin(), refs.end(), std::less<TextRef>());
 
-    if (merge_spans == MergeSpans::Yes) {
+    if (env.merge_spans() == MergeSpans::Yes) {
         std::vector<TextRef> filtered_refs;
+        fs::path current_filename;
         size_t current_line = 0;
         for (auto &ref : refs) {
-            if (current_line == ref.line()) {
+            if (current_line == ref.line() && current_filename == ref.filename()) {
                 auto &back_ref = filtered_refs.back();
                 back_ref.add_span(ref.span());
-                if (mode == Mode::SearchAndReplace) {
+                if (env.mode() == Mode::SearchAndReplace) {
                     back_ref.set_message(ref.message());  
                 }
             }
             else {
+                current_filename = ref.filename();
                 current_line = ref.line();
                 filtered_refs.push_back(ref);
             }
@@ -340,9 +387,9 @@ static void output_refs(const fs::path &current_path, Mode mode, std::vector<Tex
     for (auto &ref : refs) {
         ref.set_index(count);
         count++;
-        int flags = (merge_spans == MergeSpans::Yes) ? TextRef::CompactFeatures : TextRef::ExtendedFeatures;
-        int highlight_color_value = static_cast<int>(highlight_color);
-        std::cout << ref.to_string(flags, TextRef::FilenameFormat::RELATIVE, current_path, highlight_color_value) << std::endl;
+        int flags = (env.merge_spans() == MergeSpans::Yes) ? TextRef::CompactFeatures : TextRef::ExtendedFeatures;
+        int highlight_color_value = static_cast<int>(env.highlight_color());
+        std::cout << ref.to_string(flags, TextRef::FilenameFormat::RELATIVE, env.current_path(), highlight_color_value) << std::endl;
     }
 
     const char *refs_path = getenv("REFS_PATH");
@@ -358,8 +405,6 @@ static void output_refs(const fs::path &current_path, Mode mode, std::vector<Tex
             }
         } 
     }
-
-    exit(0);
 }
 
 static void version(void)
@@ -403,6 +448,12 @@ static struct option long_options[] =
     {0, 0, 0, 0}
 };
 
+std::vector<int> foo(const fs::path &path, const Env &env)
+{
+    std::vector<int> r;
+    return r;
+}
+
 int main(int argc, char **argv)
 {
     LOG_CHANNEL_ON(General);
@@ -415,7 +466,7 @@ int main(int argc, char **argv)
     bool option_r = false;
     bool option_s = false;
 
-    std::string option_c = "";
+    std::string option_c;
 
     while (1) {
         int option_index = 0;
@@ -467,7 +518,6 @@ int main(int argc, char **argv)
     }
     
     std::vector<std::string> string_needles;
-
     std::vector<std::regex> regex_needles;
     std::regex::flag_type regex_flags = std::regex::egrep | std::regex::optimize;
     if (option_i) {
@@ -490,7 +540,7 @@ int main(int argc, char **argv)
     for (int i = optind; i < needle_count; i++) {
         const char *arg = argv[i];
         if (option_e) {
-            regex_needles.push_back(std::regex(arg, regex_flags));
+            regex_needles.emplace_back(arg, regex_flags);
         }
         else {
             std::string needle(arg);
@@ -510,8 +560,7 @@ int main(int argc, char **argv)
         highlight_color = highlight_color_from_string(option_c);
         if (highlight_color == HighlightColor::None) {
             usage();
-            puts("");
-            std::cout << "*** unsupported highlight color: " << option_c << std::endl;
+            std::cout << "\n*** unsupported highlight color: " << option_c << std::endl;
             exit(-1);
         }
     }
@@ -519,28 +568,29 @@ int main(int argc, char **argv)
     fs::path current_path = fs::current_path();
     const auto &file_list = build_file_list(current_path, option_s ? Skip::SkipNone : Skip::SkipSkippables);
 
-    __block std::vector<TextRef> found;
-    __block int completions = 0;
-    const size_t expected_completions = file_list.size();
-    dispatch_queue_t completion_queue = dispatch_queue_create("search-tool", DISPATCH_QUEUE_SERIAL);
-    void (^completion_block)(const std::vector<TextRef> &) = ^void(const std::vector<TextRef> &file_results) {
-        found.insert(found.end(), file_results.begin(), file_results.end());
-        completions++;
-        if (completions == expected_completions) {
-            output_refs(current_path, mode, found, highlight_color, merge_spans);
-        }
-    };
+    Env env(fs::current_path(),
+            string_needles,
+            regex_needles,
+            replacement,
+            highlight_color,
+            match_type,
+            merge_spans,
+            mode,
+            search_case);
 
-    for (const auto &path : file_list) {
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-            std::vector<TextRef> file_results = process_file(path, mode, match_type, string_needles, search_case, regex_needles, replacement, merge_spans);
-            dispatch_async(completion_queue, ^{
-                completion_block(file_results);    
-            });
-        });
+    std::vector<std::future<std::vector<TextRef>>> futures;
+    for (const auto &file_path : file_list) {
+        auto a = std::async(std::launch::async, process_file, file_path, env);
+        futures.push_back(std::move(a));
     }
 
-    dispatch_main();
+    std::vector<TextRef> all_refs;
+    for (auto &f :futures) {
+        std::vector<TextRef> file_refs = f.get();
+        all_refs.insert(all_refs.cend(), file_refs.begin(), file_refs.end());
+    }
+
+    output_refs(env, all_refs);
 
     return 0;
 }
