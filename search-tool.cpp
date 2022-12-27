@@ -21,6 +21,7 @@ extern int optind;
 
 namespace fs = std::filesystem;
 
+using UU::MappedFile;
 using UU::TextRef;
 
 enum class Skip { SkipNone, SkipSkippables };
@@ -147,11 +148,11 @@ private:
 
 std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType match_type, 
     const std::vector<std::string> &string_needles, SearchCase search_case, const std::vector<std::regex> &regex_needles, 
-    const std::string &replacement)
+    const std::string &replacement, MergeSpans merge_spans)
 {
     std::vector<TextRef> results;
 
-    UU::MappedFile mapped_file(path);
+    MappedFile mapped_file(path);
     if (mapped_file.is_valid<false>()) {
         return results;
     }
@@ -255,6 +256,10 @@ std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType mat
         matches = filtered_matches;
     }
 
+   if (matches.size() == 0) {
+        return results;
+    }
+
     if (mode == Mode::Search) {
         // add a TextRef for each match
         for (auto &match : matches) {
@@ -267,10 +272,45 @@ std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType mat
 
     ASSERT(mode == Mode::SearchAndReplace);
 
+    // set up a string to hold the new string after the search and replace operation
+    // estimate the size by adding the length of the replacement for each match
+    std::string output;
+    output.reserve(source.length() + (matches.size() * replacement.length()));
+
+    std::string output_line;
+
+    size_t source_index = 0;
+    for (auto &match : matches) {
+        output += source.substr(source_index, match.match_start_index() - source_index);
+        output += replacement;
+        source_index += (match.match_start_index() - source_index);
+        source_index += match.match_length();
+        size_t index = results.size() + 1;
+
+        std::string_view source_line = std::string_view(source.substr(match.line_start_index(), match.line_length()));
+        output_line.clear();
+        size_t line_length = source_line.length();
+        if (replacement.length() > match.match_length()) {
+            line_length += replacement.length() - match.match_length();
+        }
+        output_line.reserve(line_length);
+        output_line += source_line.substr(0, match.column() - 1);
+        output_line += replacement;
+        if (match.column() - 1 + match.match_length() < source_line.length()) {
+            LOG(General, "*** append: %ld : %ld", source_line.length(), match.column() + match.match_length());
+            output_line += source_line.substr(match.column() - 1 + match.match_length());
+        }
+        results.push_back(TextRef(index, path, match.line(), match.column(), match.column() + match.match_length(), output_line));
+    }
+    output += source.substr(source_index);
+
+    LOG(General, "*** replacement: %ld", output.length());
+    LOG(General, "%s", output.c_str());
+
     return results;
 }
 
-static void output_refs(const fs::path &current_path, std::vector<TextRef> &refs, HighlightColor highlight_color, MergeSpans merge_spans) 
+static void output_refs(const fs::path &current_path, Mode mode, std::vector<TextRef> &refs, HighlightColor highlight_color, MergeSpans merge_spans) 
 {
     std::sort(refs.begin(), refs.end(), std::less<TextRef>());
 
@@ -281,6 +321,9 @@ static void output_refs(const fs::path &current_path, std::vector<TextRef> &refs
             if (current_line == ref.line()) {
                 auto &back_ref = filtered_refs.back();
                 back_ref.add_span(ref.span());
+                if (mode == Mode::SearchAndReplace) {
+                    back_ref.set_message(ref.message());  
+                }
             }
             else {
                 current_line = ref.line();
@@ -362,6 +405,9 @@ static struct option long_options[] =
 
 int main(int argc, char **argv)
 {
+    LOG_CHANNEL_ON(General);
+    LOG_CHANNEL_ON(Error);
+
     bool option_a = false;
     bool option_e = false;
     bool option_i = false;
@@ -481,13 +527,13 @@ int main(int argc, char **argv)
         found.insert(found.end(), file_results.begin(), file_results.end());
         completions++;
         if (completions == expected_completions) {
-            output_refs(current_path, found, highlight_color, merge_spans);
+            output_refs(current_path, mode, found, highlight_color, merge_spans);
         }
     };
 
     for (const auto &path : file_list) {
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-            std::vector<TextRef> file_results = process_file(path, mode, match_type, string_needles, search_case, regex_needles, replacement);
+            std::vector<TextRef> file_results = process_file(path, mode, match_type, string_needles, search_case, regex_needles, replacement, merge_spans);
             dispatch_async(completion_queue, ^{
                 completion_block(file_results);    
             });
