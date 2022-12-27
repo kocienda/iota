@@ -23,10 +23,10 @@ namespace fs = std::filesystem;
 
 using UU::TextRef;
 
-enum class MatchType { All, Any };
-enum class SearchCase { Sensitive, Insensitive };
 enum class Skip { SkipNone, SkipSkippables };
 enum class Mode { Search, SearchAndReplace };
+enum class MatchType { All, Any };
+enum class SearchCase { Sensitive, Insensitive };
 enum class HighlightColor {
     None = 0,
     Black = 30,
@@ -39,6 +39,7 @@ enum class HighlightColor {
     Cyan = 96,
     White = 97,
 };
+enum class MergeSpans { No, Yes };
 
 static HighlightColor highlight_color_from_string(const std::string &s)
 {
@@ -269,15 +270,36 @@ std::vector<TextRef> process_file(const fs::path &path, Mode mode, MatchType mat
     return results;
 }
 
-static void output_results(const fs::path &current_path, std::vector<TextRef> &results, HighlightColor highlight_color) 
+static void output_refs(const fs::path &current_path, std::vector<TextRef> &refs, HighlightColor highlight_color, MergeSpans merge_spans) 
 {
-    std::sort(results.begin(), results.end(), std::less<TextRef>());
+    std::sort(refs.begin(), refs.end(), std::less<TextRef>());
+
+    if (merge_spans == MergeSpans::Yes) {
+        std::vector<TextRef> filtered_refs;
+        size_t current_line = 0;
+        for (auto &ref : refs) {
+            if (current_line == ref.line()) {
+                auto &back_ref = filtered_refs.back();
+                back_ref.add_span(ref.span());
+            }
+            else {
+                current_line = ref.line();
+                filtered_refs.push_back(ref);
+            }
+        }
+        refs = filtered_refs;
+        for (auto &ref : refs) {
+            ref.simplify_span();
+        }
+    }
+
     int count = 1;
-    for (auto &ref : results) {
+    for (auto &ref : refs) {
         ref.set_index(count);
         count++;
-        std::cout << ref.to_string(TextRef::ExtendedFeatures, 
-            TextRef::FilenameFormat::RELATIVE, current_path, static_cast<int>(highlight_color)) << std::endl;
+        int flags = (merge_spans == MergeSpans::Yes) ? TextRef::CompactFeatures : TextRef::ExtendedFeatures;
+        int highlight_color_value = static_cast<int>(highlight_color);
+        std::cout << ref.to_string(flags, TextRef::FilenameFormat::RELATIVE, current_path, highlight_color_value) << std::endl;
     }
 
     const char *refs_path = getenv("REFS_PATH");
@@ -285,7 +307,7 @@ static void output_results(const fs::path &current_path, std::vector<TextRef> &r
         std::ofstream file(refs_path);
         if (!file.fail()) {
             count = 1;
-            for (auto ref : results) {
+            for (auto &ref : refs) {
                 ref.set_index(count);
                 count++;
                 std::string str = ref.to_string(TextRef::StandardFeatures, TextRef::FilenameFormat::ABSOLUTE);
@@ -316,6 +338,7 @@ static void usage(void)
     puts("    -e : Search needles are compiles as regular expressions.");
     puts("    -h : Prints this help message.");
     puts("    -i : Case insensitive search.");
+    puts("    -l : Show each found result on its own line.");
     puts("    -r : Search and replace. Takes two arguments: <search> <replacement>");
     puts("             <search> can be a string or a regex (when invoked with -e)");
     puts("             <replacement> is always treated as a string");
@@ -330,6 +353,7 @@ static struct option long_options[] =
     {"regex-search",      no_argument,       0, 'e'},
     {"help",              no_argument,       0, 'h'},
     {"case-insensitive",  no_argument,       0, 'i'},
+    {"long",              no_argument,       0, 'l'},
     {"replace",           no_argument,       0, 'r'},
     {"search-skippables", no_argument,       0, 's'},
     {"version",           no_argument,       0, 'v'},
@@ -341,6 +365,7 @@ int main(int argc, char **argv)
     bool option_a = false;
     bool option_e = false;
     bool option_i = false;
+    bool option_l = false;
     bool option_r = false;
     bool option_s = false;
 
@@ -348,7 +373,7 @@ int main(int argc, char **argv)
 
     while (1) {
         int option_index = 0;
-        int c = getopt_long(argc, argv, "ac:ehirsv", long_options, &option_index);
+        int c = getopt_long(argc, argv, "ac:ehilrsv", long_options, &option_index);
         if (c == -1)
             break;
     
@@ -367,6 +392,9 @@ int main(int argc, char **argv)
                 return 0;            
             case 'i':
                 option_i = true;
+                break;            
+            case 'l':
+                option_l = true;
                 break;            
             case 'r':
                 option_r = true;
@@ -431,6 +459,7 @@ int main(int argc, char **argv)
     MatchType match_type = option_a ? MatchType::Any : MatchType::All;
     Mode mode = option_r ? Mode::SearchAndReplace : Mode::Search;
     HighlightColor highlight_color = HighlightColor::None;
+    MergeSpans merge_spans = option_l ? MergeSpans::No : MergeSpans::Yes;
     if (option_c.length() > 0) {
         highlight_color = highlight_color_from_string(option_c);
         if (highlight_color == HighlightColor::None) {
@@ -452,7 +481,7 @@ int main(int argc, char **argv)
         found.insert(found.end(), file_results.begin(), file_results.end());
         completions++;
         if (completions == expected_completions) {
-            output_results(current_path, found, highlight_color);
+            output_refs(current_path, found, highlight_color, merge_spans);
         }
     };
 
