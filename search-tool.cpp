@@ -316,8 +316,8 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
             std::string line = std::string(source.substr(match.line_start_index(), match.line_length()));
             Span<SizeType> column_span;
             for (const auto &match_range : match.span().ranges()) {
-                SizeType start_column = match_range.first() - match.line_start_index();
-                SizeType end_column = match_range.last() - match.line_start_index();
+                SizeType start_column = match_range.first() - match.line_start_index() + 1;
+                SizeType end_column = match_range.last() - match.line_start_index() + 1;
                 column_span.add(start_column, end_column);
             }
             results.push_back(TextRef(index, filename, match.line(), column_span, line));
@@ -352,9 +352,9 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
             // do the search and replace for the TextRef       
             SizeType start_column = match_range.first() - match.line_start_index();
             output_line += source_line.substr(output_line_index, start_column - output_line_index);
-            SizeType replacement_start_column = output_line.length();
+            SizeType replacement_start_column = output_line.length() + 1;
             output_line += env.replacement();
-            SizeType replacement_end_column = output_line.length();
+            SizeType replacement_end_column = output_line.length() + 1;
             output_line_index += (start_column - output_line_index);
             output_line_index += match_range.length();
             output_span.add(replacement_start_column, replacement_end_column);
