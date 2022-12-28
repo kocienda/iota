@@ -12,6 +12,8 @@
 
 #include <UU/UU.h>
 
+using UU::MappedFile;
+using UU::SizeType;
 using UU::Span;
 using UU::TextRef;
 using UU::UInt32;
@@ -94,24 +96,14 @@ int main(int argc, char *argv[])
         exit(-1);
     }
 
-    std::ifstream file(refs_path);
-    if (file.fail()) {
+    MappedFile refs_file(refs_path);
+    if (refs_file.is_valid<false>()) {
         std::cerr << "*** ref: unable to open refs file: " << refs_path << std::endl;
         return -1;
-    } 
-
-    std::string str;
-    std::vector<UU::TextRef> refs;
-    while (getline(file, str)) {
-        UU::TextRef ref(UU::TextRef::from_string(str));    
-        if (ref.has_index()) {
-            refs.push_back(ref);
-        }
     }
 
-    if (refs.size() == 0) {
-        return 0;
-    }
+    std::string_view refs_string_view((char *)refs_file.base(), refs_file.file_length());
+    std::vector<SizeType> line_end_offsets = UU::find_line_end_offsets(refs_string_view);
 
     Span<UInt32> span;
     for (UInt32 i = optind; i < argc; i++) {
@@ -130,14 +122,24 @@ int main(int argc, char *argv[])
         exec_args.push_back("-g");
     }
 
-    for (int sidx : span) {
-        if (sidx <= 0 || sidx > refs.size()) {
+    for (const auto &idx : line_end_offsets) {
+        std::cout << idx << std::endl;
+    }
+
+    for (UInt32 sidx : span) {
+        if (sidx <= 0 || sidx > line_end_offsets.size()) {
             std::cerr << "*** no such ref: " << sidx << std::endl;
             return -1;
         }
-        sidx--;
-        const TextRef &ref = refs[sidx];
+
+        std::string str = std::string(UU::string_view_for_line(refs_string_view, line_end_offsets, sidx));
+        UU::TextRef ref(UU::TextRef::from_string(str));    
         exec_args.push_back(ref.to_string(TextRef::Filename | TextRef::Line |  TextRef::Column));
+    }
+
+    if (exec_args.size() == 0) {
+        std::cerr << "*** no refs" << std::endl;
+        return -1;
     }
 
     int rc = UU::launch(opener, exec_args);

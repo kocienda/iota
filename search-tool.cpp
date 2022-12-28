@@ -24,6 +24,7 @@ namespace fs = std::filesystem;
 
 using UU::MappedFile;
 using UU::Span;
+using UU::SizeType;
 using UU::TextRef;
 
 enum class Skip { SkipNone, SkipSkippables };
@@ -133,66 +134,39 @@ static std::vector<fs::path> build_file_list(const fs::path &dir, Skip skip = Sk
     return result;
 }
 
-std::vector<size_t> find_line_ending_offsets(const std::string_view &str, size_t max_match_start_index)
-{
-    max_match_start_index = std::min(max_match_start_index, str.length()); 
-    std::vector<size_t> result;
-
-    // find all line endings in str up to and including the line with the last match
-    for (size_t idx = 0; idx < max_match_start_index; idx++) {
-        if (str[idx] == '\n') {
-            result.push_back(idx);
-        }
-    }
-    // add the line end after the last match, or if there is none, the last index in the file
-    bool added_last_line_ending = false;
-    for (size_t idx = max_match_start_index; idx < str.length(); idx++) {
-        if (str[idx] == '\n') {
-            result.push_back(idx);
-            added_last_line_ending = true;
-            break;
-        }
-    }
-    if (!added_last_line_ending) {
-        result.push_back(str.length()); // one after the end
-    }
-
-    return result;
-}
-
 class Match
 {
 public:
     Match() {}
-    Match(size_t needle_index, size_t match_start_index, size_t match_length) : 
+    Match(SizeType needle_index, SizeType match_start_index, SizeType match_length) : 
         m_needle_index(needle_index), m_span(match_start_index, match_start_index + match_length) {}
 
-    size_t needle_index() const { return m_needle_index; }
-    void set_needle_index(size_t needle_index) { m_needle_index = needle_index; }
+    SizeType needle_index() const { return m_needle_index; }
+    void set_needle_index(SizeType needle_index) { m_needle_index = needle_index; }
 
-    size_t match_start_index() const { return m_span.first(); }
+    SizeType match_start_index() const { return m_span.first(); }
 
-    const Span<size_t> &span() const { return m_span; }
-    void add_span(const Span<size_t> &span) { m_span.add(span); }
+    const Span<SizeType> &span() const { return m_span; }
+    void add_span(const Span<SizeType> &span) { m_span.add(span); }
     void simplify_span() { m_span.simplify(); }
 
-    size_t line_start_index() const { return m_line_start_index; }
-    void set_line_start_index(size_t line_start_index) { m_line_start_index = line_start_index; }
+    SizeType line_start_index() const { return m_line_start_index; }
+    void set_line_start_index(SizeType line_start_index) { m_line_start_index = line_start_index; }
 
-    size_t line_length() const { return m_line_length; }
-    void set_line_length(size_t line_length) { m_line_length = line_length; }
+    SizeType line_length() const { return m_line_length; }
+    void set_line_length(SizeType line_length) { m_line_length = line_length; }
 
-    size_t line() const { return m_line; }
-    void set_line(size_t line) { m_line = line; }
+    SizeType line() const { return m_line; }
+    void set_line(SizeType line) { m_line = line; }
 
-    size_t column() const { return match_start_index() - m_line_start_index; }
+    SizeType column() const { return match_start_index() - m_line_start_index; }
 
 private:
-    size_t m_needle_index = 0;
-    Span<size_t> m_span;
-    size_t m_line_start_index = 0;
-    size_t m_line_length = 0;
-    size_t m_line = 0;
+    SizeType m_needle_index = 0;
+    Span<SizeType> m_span;
+    SizeType m_line_start_index = 0;
+    SizeType m_line_length = 0;
+    SizeType m_line = 0;
 };
 
 std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
@@ -219,7 +193,7 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
     }
 
     std::vector<Match> matches;
-    size_t needle_index = 0;
+    SizeType needle_index = 0;
 
     // do string searches
     for (const auto &string_needle : env.string_needles()) {
@@ -254,7 +228,7 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
 
     // code below needs needles sorted by start index,
     // but only do the work if there is more than one needle
-    size_t needle_count = env.string_needles().size() + env.regex_needles().size();
+    SizeType needle_count = env.string_needles().size() + env.regex_needles().size();
     if (needle_count > 1) {
         std::sort(matches.begin(), matches.end(), [](const Match &a, const Match &b) { 
             return a.match_start_index() < b.match_start_index(); 
@@ -262,15 +236,15 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
     }
 
     // set line-related metadata for the match
-    std::vector<size_t> haystack_line_end_offsets = find_line_ending_offsets(haystack, matches.back().match_start_index());
-    size_t line = 0;
+    std::vector<SizeType> haystack_line_end_offsets = UU::find_line_end_offsets(haystack, matches.back().match_start_index());
+    SizeType line = 0;
     for (auto &match : matches) {
         while (haystack_line_end_offsets[line] < match.match_start_index()) {
             line++;
             ASSERT(line < haystack_line_end_offsets.size());
         }
-        size_t sidx = line == 0 ? 0 : (haystack_line_end_offsets[line -1] + 1);
-        size_t eidx = haystack_line_end_offsets[line];
+        SizeType sidx = line == 0 ? 0 : (haystack_line_end_offsets[line -1] + 1);
+        SizeType eidx = haystack_line_end_offsets[line];
         match.set_line_start_index(sidx);
         match.set_line_length(eidx - sidx);
         match.set_line(line + 1);
@@ -281,10 +255,10 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
     if (env.match_type() == MatchType::All && needle_count > 1) {
         std::vector<Match> filtered_matches;
         filtered_matches.reserve(matches.size());
-        size_t current_line = 0;
-        std::set<size_t> matched_needle_indexes;
-        size_t sidx = 0;
-        size_t idx = 0;
+        SizeType current_line = 0;
+        std::set<SizeType> matched_needle_indexes;
+        SizeType sidx = 0;
+        SizeType idx = 0;
         for (const auto &match : matches) {
             if (current_line == 0) {
                 current_line = match.line();    
@@ -318,7 +292,7 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
     if (env.merge_spans() == MergeSpans::Yes) {
         std::vector<Match> filtered_matches;
         filtered_matches.reserve(matches.size());
-        size_t current_line = 0;
+        SizeType current_line = 0;
         for (auto &match : matches) {
             if (current_line == match.line()) {
                 auto &back_match = filtered_matches.back();
@@ -338,12 +312,12 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
     if (env.mode() == Mode::Search) {
         // add a TextRef for each match
         for (auto &match : matches) {
-            size_t index = results.size() + 1;
+            SizeType index = results.size() + 1;
             std::string line = std::string(source.substr(match.line_start_index(), match.line_length()));
-            Span<size_t> column_span;
+            Span<SizeType> column_span;
             for (const auto &match_range : match.span().ranges()) {
-                size_t start_column = match_range.first() - match.line_start_index();
-                size_t end_column = match_range.last() - match.line_start_index();
+                SizeType start_column = match_range.first() - match.line_start_index();
+                SizeType end_column = match_range.last() - match.line_start_index();
                 column_span.add(start_column, end_column);
             }
             results.push_back(TextRef(index, filename, match.line(), column_span, line));
@@ -357,7 +331,7 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
     // estimate the size by adding the length of the replacement for each match
     std::string output;
     output.reserve(source.length() + (matches.size() * env.replacement().length()));
-    size_t source_index = 0;
+    SizeType source_index = 0;
     std::string output_line;
 
     for (auto &match : matches) {
@@ -365,8 +339,8 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
         std::string_view source_line = std::string_view(source.substr(match.line_start_index(), match.line_length()));
         output_line.clear();
         output_line.reserve(source_line.length() + (match.span().ranges().size() * env.replacement().length()));
-        Span<size_t> output_span;
-        size_t output_line_index = 0;
+        Span<SizeType> output_span;
+        SizeType output_line_index = 0;
         
         for (const auto &match_range : match.span().ranges()) {
             // do the search and replace for the output file
@@ -376,11 +350,11 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
             source_index += match_range.length();
 
             // do the search and replace for the TextRef       
-            size_t start_column = match_range.first() - match.line_start_index();
+            SizeType start_column = match_range.first() - match.line_start_index();
             output_line += source_line.substr(output_line_index, start_column - output_line_index);
-            size_t replacement_start_column = output_line.length();
+            SizeType replacement_start_column = output_line.length();
             output_line += env.replacement();
-            size_t replacement_end_column = output_line.length();
+            SizeType replacement_end_column = output_line.length();
             output_line_index += (start_column - output_line_index);
             output_line_index += match_range.length();
             output_span.add(replacement_start_column, replacement_end_column);
@@ -389,7 +363,7 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
         output_line += source_line.substr(output_line_index);
 
         // make the TextRef with the replaced text
-        size_t index = results.size() + 1;
+        SizeType index = results.size() + 1;
         results.push_back(TextRef(index, filename, match.line(), output_span, output_line));
     }
     // append any remaining text on the output file
