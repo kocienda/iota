@@ -122,10 +122,6 @@ int main(int argc, char *argv[])
         exec_args.push_back("-g");
     }
 
-    for (const auto &idx : line_end_offsets) {
-        std::cout << idx << std::endl;
-    }
-
     for (UInt32 sidx : span) {
         if (sidx <= 0 || sidx > line_end_offsets.size()) {
             std::cerr << "*** no such ref: " << sidx << std::endl;

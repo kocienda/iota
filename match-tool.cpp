@@ -14,6 +14,8 @@ extern int optind;
 
 namespace fs = std::filesystem;
 
+using UU::TextRef;
+
 static void version(void)
 {
     puts("match : version 4.0");
@@ -209,26 +211,18 @@ int main(int argc, char *argv[])
 
     // generate output
     std::stringstream file_out;
-    int count = 0;
+    int index = 0;
+    int feature_flags = option_p ? TextRef::Filename : (TextRef::Index | TextRef::Filename);
+    const std::string match_ending = option_p ? " " : "\n";
     for (const auto &match : matches) {
-        count++;
-        if (option_p) {
-            if (option_f) {
-                std::cout << UU::shell_escaped_string(match.c_str()) << " ";
-            }
-            else {
-                std::cout << UU::shell_escaped_string(match.filename().c_str()) << " ";
-            }
+        index++;
+        TextRef ref(index, match);
+        file_out << ref.to_string(TextRef::Index | TextRef::Filename, TextRef::FilenameFormat::ABSOLUTE) << std::endl;
+        if (option_f) {
+            std::cout << ref.to_string(feature_flags, TextRef::FilenameFormat::ABSOLUTE) << match_ending;
         }
         else {
-            const std::string &full_path = UU::shell_escaped_string(match.c_str());
-            file_out << count << ") " << full_path << "\n";
-            if (option_f) {
-                std::cout << count << ") " << full_path << "\n";
-            }
-            else {
-                std::cout << count << ") " << UU::shell_escaped_string(match.filename().c_str()) << "\n";
-            }
+            std::cout << ref.to_string(feature_flags, TextRef::FilenameFormat::RELATIVE, cwd) << match_ending;
         }
     }
 

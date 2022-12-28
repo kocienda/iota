@@ -46,7 +46,7 @@ enum class HighlightColor {
 enum class MergeSpans { No, Yes };
 
 // this semaphore limits the number of concurrent searches
-const int good_concurrency_count = UU::get_good_concurrency_count();
+const int good_concurrency_count = UU::get_good_concurrency_count() - 1;
 std::counting_semaphore g_semaphore(good_concurrency_count);
 
 class Env
@@ -570,7 +570,7 @@ int main(int argc, char **argv)
     }
 
     fs::path current_path = fs::current_path();
-    const auto &file_list = build_file_list(current_path, option_s ? Skip::SkipNone : Skip::SkipSkippables);
+    const auto &files = build_file_list(current_path, option_s ? Skip::SkipNone : Skip::SkipSkippables);
 
     Env env(fs::current_path(),
             string_needles,
@@ -583,8 +583,9 @@ int main(int argc, char **argv)
             search_case);
 
     std::vector<std::future<std::vector<TextRef>>> futures;
-    for (const auto &file_path : file_list) {
-        auto a = std::async(std::launch::async, process_file, file_path, env);
+    futures.reserve(files.size());
+    for (const auto &filename : files) {
+        auto a = std::async(std::launch::async, process_file, filename, env);
         futures.push_back(std::move(a));
     }
 
