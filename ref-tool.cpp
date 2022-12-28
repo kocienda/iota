@@ -132,7 +132,8 @@ int main(int argc, char *argv[])
 
     for (int sidx : span) {
         if (sidx <= 0 || sidx > refs.size()) {
-            continue;
+            std::cerr << "*** no such ref: " << sidx << std::endl;
+            return -1;
         }
         sidx--;
         const TextRef &ref = refs[sidx];
