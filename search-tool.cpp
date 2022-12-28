@@ -3,12 +3,12 @@
 //
 
 #include <algorithm>
-#include <cstring>
 #include <fstream>
 #include <future>
 #include <iostream>
 #include <map>
 #include <regex>
+#include <semaphore>
 #include <set>
 #include <string>
 #include <vector>
@@ -23,10 +23,11 @@ extern int optind;
 namespace fs = std::filesystem;
 
 using UU::MappedFile;
+using UU::Span;
 using UU::TextRef;
 
 enum class Skip { SkipNone, SkipSkippables };
-enum class Mode { Search, SearchAndReplace };
+enum class Mode { Search, SearchAndReplace, SearchAndReplaceDryRun };
 enum class MatchType { All, Any };
 enum class SearchCase { Sensitive, Insensitive };
 enum class HighlightColor {
@@ -42,6 +43,10 @@ enum class HighlightColor {
     White = 97,
 };
 enum class MergeSpans { No, Yes };
+
+// this semaphore limits the number of concurrent searches
+const int good_concurrency_count = UU::get_good_concurrency_count();
+std::counting_semaphore g_semaphore(good_concurrency_count);
 
 class Env
 {
@@ -160,16 +165,16 @@ class Match
 public:
     Match() {}
     Match(size_t needle_index, size_t match_start_index, size_t match_length) : 
-        m_needle_index(needle_index), m_match_start_index(match_start_index), m_match_length(match_length) {}
+        m_needle_index(needle_index), m_span(match_start_index, match_start_index + match_length) {}
 
     size_t needle_index() const { return m_needle_index; }
     void set_needle_index(size_t needle_index) { m_needle_index = needle_index; }
 
-    size_t match_start_index() const { return m_match_start_index; }
-    void set_match_start_index(size_t match_start_index) { m_match_start_index = match_start_index; }
+    size_t match_start_index() const { return m_span.first(); }
 
-    size_t match_length() const { return m_match_length; }
-    void set_match_length(size_t match_length) { m_match_length = match_length; }
+    const Span<size_t> &span() const { return m_span; }
+    void add_span(const Span<size_t> &span) { m_span.add(span); }
+    void simplify_span() { m_span.simplify(); }
 
     size_t line_start_index() const { return m_line_start_index; }
     void set_line_start_index(size_t line_start_index) { m_line_start_index = line_start_index; }
@@ -180,32 +185,32 @@ public:
     size_t line() const { return m_line; }
     void set_line(size_t line) { m_line = line; }
 
-    size_t column() const { return m_column; }
-    void set_column(size_t column) { m_column = column; }
+    size_t column() const { return match_start_index() - m_line_start_index; }
 
 private:
     size_t m_needle_index = 0;
-    size_t m_match_start_index = 0;
-    size_t m_match_length = 0;
+    Span<size_t> m_span;
     size_t m_line_start_index = 0;
     size_t m_line_length = 0;
     size_t m_line = 0;
-    size_t m_column = 0;
 };
 
-std::vector<TextRef> process_file(const fs::path &path, const Env &env)
+std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
 {
+    // The guard releases the semaphore regardless of how the function exits
+    UU::AcquireReleaseGuard semaphore_guard(g_semaphore);
+
     std::vector<TextRef> results;
 
-    MappedFile mapped_file(path);
+    MappedFile mapped_file(filename);
     if (mapped_file.is_valid<false>()) {
         return results;
     }
 
     std::string_view source((char *)mapped_file.base(), mapped_file.file_length());
     std::string_view haystack((char *)mapped_file.base(), mapped_file.file_length());
+    
     std::string case_folded_string;
-
     if (env.search_case() == SearchCase::Insensitive) {
         case_folded_string = std::string(haystack);
         std::transform(case_folded_string.cbegin(), case_folded_string.cend(), case_folded_string.begin(), 
@@ -214,8 +219,9 @@ std::vector<TextRef> process_file(const fs::path &path, const Env &env)
     }
 
     std::vector<Match> matches;
-
     size_t needle_index = 0;
+
+    // do string searches
     for (const auto &string_needle : env.string_needles()) {
         const auto searcher = std::boyer_moore_searcher(string_needle.begin(), string_needle.end());
         auto hit = haystack.begin();
@@ -230,6 +236,7 @@ std::vector<TextRef> process_file(const fs::path &path, const Env &env)
         needle_index++;
     }
 
+    // do regex searches
     for (const auto &regex_needle : env.regex_needles()) {
         const auto searcher_begin = std::cregex_iterator(haystack.begin(), haystack.end(), regex_needle);
         auto searcher_end = std::cregex_iterator();
@@ -240,6 +247,7 @@ std::vector<TextRef> process_file(const fs::path &path, const Env &env)
         needle_index++;
     }
 
+    // return if nothing found
     if (matches.size() == 0) {
         return results;
     }
@@ -253,7 +261,7 @@ std::vector<TextRef> process_file(const fs::path &path, const Env &env)
         });
     }
 
-    // set all the metadata for the match, mostly by finding the line for the match in haystack
+    // set line-related metadata for the match
     std::vector<size_t> haystack_line_end_offsets = find_line_ending_offsets(haystack, matches.back().match_start_index());
     size_t line = 0;
     for (auto &match : matches) {
@@ -266,13 +274,13 @@ std::vector<TextRef> process_file(const fs::path &path, const Env &env)
         match.set_line_start_index(sidx);
         match.set_line_length(eidx - sidx);
         match.set_line(line + 1);
-        match.set_column(match.match_start_index() - sidx + 1);
     }
 
     // if MatchType is All and there's more than one needle, 
     // filter each line's worth of matches to ensure each needle matches
     if (env.match_type() == MatchType::All && needle_count > 1) {
         std::vector<Match> filtered_matches;
+        filtered_matches.reserve(matches.size());
         size_t current_line = 0;
         std::set<size_t> matched_needle_indexes;
         size_t sidx = 0;
@@ -301,8 +309,30 @@ std::vector<TextRef> process_file(const fs::path &path, const Env &env)
         matches = filtered_matches;
     }
 
-   if (matches.size() == 0) {
+    // return if all the matches got filtered out
+    if (matches.size() == 0) {
         return results;
+    }
+
+    // merge spans if needed so each TextRef will contain all the matches for a line
+    if (env.merge_spans() == MergeSpans::Yes) {
+        std::vector<Match> filtered_matches;
+        filtered_matches.reserve(matches.size());
+        size_t current_line = 0;
+        for (auto &match : matches) {
+            if (current_line == match.line()) {
+                auto &back_match = filtered_matches.back();
+                back_match.add_span(match.span());
+            }
+            else {
+                current_line = match.line();
+                filtered_matches.push_back(match);
+            }
+        }
+        matches = filtered_matches;
+        for (auto &match : matches) {
+            match.simplify_span();
+        }
     }
 
     if (env.mode() == Mode::Search) {
@@ -310,47 +340,65 @@ std::vector<TextRef> process_file(const fs::path &path, const Env &env)
         for (auto &match : matches) {
             size_t index = results.size() + 1;
             std::string line = std::string(source.substr(match.line_start_index(), match.line_length()));
-            results.push_back(TextRef(index, path, match.line(), match.column(), match.column() + match.match_length(), line));
+            Span<size_t> column_span;
+            for (const auto &match_range : match.span().ranges()) {
+                size_t start_column = match_range.first() - match.line_start_index();
+                size_t end_column = match_range.last() - match.line_start_index();
+                column_span.add(start_column, end_column);
+            }
+            results.push_back(TextRef(index, filename, match.line(), column_span, line));
         }
         return results;
     }
 
-    ASSERT(env.mode() == Mode::SearchAndReplace);
+    ASSERT(env.mode() == Mode::SearchAndReplace || env.mode() == Mode::SearchAndReplaceDryRun);
 
     // set up a string to hold the new string after the search and replace operation
     // estimate the size by adding the length of the replacement for each match
     std::string output;
     output.reserve(source.length() + (matches.size() * env.replacement().length()));
-
+    size_t source_index = 0;
     std::string output_line;
 
-    size_t source_index = 0;
     for (auto &match : matches) {
-        output += source.substr(source_index, match.match_start_index() - source_index);
-        output += env.replacement();
-        source_index += (match.match_start_index() - source_index);
-        source_index += match.match_length();
-        size_t index = results.size() + 1;
-
+        // set up the source line and span for the replacement TextRef        
         std::string_view source_line = std::string_view(source.substr(match.line_start_index(), match.line_length()));
         output_line.clear();
-        size_t line_length = source_line.length();
-        if (env.replacement().length() > match.match_length()) {
-            line_length += env.replacement().length() - match.match_length();
+        output_line.reserve(source_line.length() + (match.span().ranges().size() * env.replacement().length()));
+        Span<size_t> output_span;
+        size_t output_line_index = 0;
+        
+        for (const auto &match_range : match.span().ranges()) {
+            // do the search and replace for the output file
+            output += source.substr(source_index, match_range.first() - source_index);
+            output += env.replacement();
+            source_index += (match_range.first() - source_index);
+            source_index += match_range.length();
+
+            // do the search and replace for the TextRef       
+            size_t start_column = match_range.first() - match.line_start_index();
+            output_line += source_line.substr(output_line_index, start_column - output_line_index);
+            size_t replacement_start_column = output_line.length();
+            output_line += env.replacement();
+            size_t replacement_end_column = output_line.length();
+            output_line_index += (start_column - output_line_index);
+            output_line_index += match_range.length();
+            output_span.add(replacement_start_column, replacement_end_column);
         }
-        output_line.reserve(line_length);
-        output_line += source_line.substr(0, match.column() - 1);
-        output_line += env.replacement();
-        if (match.column() - 1 + match.match_length() < source_line.length()) {
-            LOG(General, "*** append: %ld : %ld", source_line.length(), match.column() + match.match_length());
-            output_line += source_line.substr(match.column() - 1 + match.match_length());
-        }
-        results.push_back(TextRef(index, path, match.line(), match.column(), match.column() + match.match_length(), output_line));
+        // append any remaining text on the output line
+        output_line += source_line.substr(output_line_index);
+
+        // make the TextRef with the replaced text
+        size_t index = results.size() + 1;
+        results.push_back(TextRef(index, filename, match.line(), output_span, output_line));
     }
+    // append any remaining text on the output file
     output += source.substr(source_index);
 
-    LOG(General, "*** replacement: %ld", output.length());
-    LOG(General, "%s", output.c_str());
+    // write the changed file if needed
+    if (env.mode() == Mode::SearchAndReplace) {
+        UU::write_file(filename, output);
+    }
 
     return results;
 }
@@ -358,30 +406,6 @@ std::vector<TextRef> process_file(const fs::path &path, const Env &env)
 static void output_refs(const Env &env, std::vector<TextRef> &refs) 
 {
     std::sort(refs.begin(), refs.end(), std::less<TextRef>());
-
-    if (env.merge_spans() == MergeSpans::Yes) {
-        std::vector<TextRef> filtered_refs;
-        fs::path current_filename;
-        size_t current_line = 0;
-        for (auto &ref : refs) {
-            if (current_line == ref.line() && current_filename == ref.filename()) {
-                auto &back_ref = filtered_refs.back();
-                back_ref.add_span(ref.span());
-                if (env.mode() == Mode::SearchAndReplace) {
-                    back_ref.set_message(ref.message());  
-                }
-            }
-            else {
-                current_filename = ref.filename();
-                current_line = ref.line();
-                filtered_refs.push_back(ref);
-            }
-        }
-        refs = filtered_refs;
-        for (auto &ref : refs) {
-            ref.simplify_span();
-        }
-    }
 
     int count = 1;
     for (auto &ref : refs) {
@@ -427,6 +451,7 @@ static void usage(void)
     puts("    -h : Prints this help message.");
     puts("    -i : Case insensitive search.");
     puts("    -l : Show each found result on its own line.");
+    puts("    -n : Search and replace dry run. Don't change any files. Ignored if not run with -r");
     puts("    -r : Search and replace. Takes two arguments: <search> <replacement>");
     puts("             <search> can be a string or a regex (when invoked with -e)");
     puts("             <replacement> is always treated as a string");
@@ -442,17 +467,12 @@ static struct option long_options[] =
     {"help",              no_argument,       0, 'h'},
     {"case-insensitive",  no_argument,       0, 'i'},
     {"long",              no_argument,       0, 'l'},
+    {"dry-run",           no_argument,       0, 'n'},
     {"replace",           no_argument,       0, 'r'},
     {"search-skippables", no_argument,       0, 's'},
     {"version",           no_argument,       0, 'v'},
     {0, 0, 0, 0}
 };
-
-std::vector<int> foo(const fs::path &path, const Env &env)
-{
-    std::vector<int> r;
-    return r;
-}
 
 int main(int argc, char **argv)
 {
@@ -463,6 +483,7 @@ int main(int argc, char **argv)
     bool option_e = false;
     bool option_i = false;
     bool option_l = false;
+    bool option_n = false;
     bool option_r = false;
     bool option_s = false;
 
@@ -470,7 +491,7 @@ int main(int argc, char **argv)
 
     while (1) {
         int option_index = 0;
-        int c = getopt_long(argc, argv, "ac:ehilrsv", long_options, &option_index);
+        int c = getopt_long(argc, argv, "ac:ehilnrsv", long_options, &option_index);
         if (c == -1)
             break;
     
@@ -492,6 +513,9 @@ int main(int argc, char **argv)
                 break;            
             case 'l':
                 option_l = true;
+                break;            
+            case 'n':
+                option_n = true;
                 break;            
             case 'r':
                 option_r = true;
@@ -553,7 +577,13 @@ int main(int argc, char **argv)
     
     SearchCase search_case = option_i ? SearchCase::Insensitive : SearchCase::Sensitive;
     MatchType match_type = option_a ? MatchType::Any : MatchType::All;
-    Mode mode = option_r ? Mode::SearchAndReplace : Mode::Search;
+    Mode mode = Mode::Search;
+    if (option_r) {
+        mode = Mode::SearchAndReplace;
+        if (option_n) {
+            mode = Mode::SearchAndReplaceDryRun;
+        }
+    }
     HighlightColor highlight_color = HighlightColor::None;
     MergeSpans merge_spans = option_l ? MergeSpans::No : MergeSpans::Yes;
     if (option_c.length() > 0) {
