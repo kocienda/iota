@@ -28,7 +28,6 @@
 #include <iostream>
 #include <map>
 #include <regex>
-#include <semaphore>
 #include <set>
 #include <string>
 #include <vector>
@@ -37,6 +36,19 @@
 #include <stdio.h>
 
 #include <UU/UU.h>
+
+#define USE_FUTURES 0
+
+#define USE_DISPATCH (PLATFORM(MAC) && !USE_FUTURES)
+
+#if USE_DISPATCH
+#include <dispatch/dispatch.h>
+#else
+#include <semaphore>
+// this semaphore limits the number of concurrent searches
+const int good_concurrency_count = UU::get_good_concurrency_count() - 1;
+std::counting_semaphore g_semaphore(good_concurrency_count);
+#endif
 
 extern int optind;
 
@@ -64,10 +76,6 @@ enum class HighlightColor {
     White = 97,
 };
 enum class MergeSpans { No, Yes };
-
-// this semaphore limits the number of concurrent searches
-const int good_concurrency_count = UU::get_good_concurrency_count() - 1;
-std::counting_semaphore g_semaphore(good_concurrency_count);
 
 class Env
 {
@@ -191,8 +199,10 @@ private:
 
 std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
 {
+#if !USE_DISPATCH
     // The guard releases the semaphore regardless of how the function exits
     UU::AcquireReleaseGuard semaphore_guard(g_semaphore);
+#endif
 
     std::vector<TextRef> results;
 
@@ -608,6 +618,28 @@ int main(int argc, char **argv)
             mode,
             search_case);
 
+#if USE_DISPATCH
+    dispatch_queue_t completion_queue = dispatch_queue_create("iota-search", DISPATCH_QUEUE_SERIAL);
+
+    __block int completions = 0;
+    __block std::vector<TextRef> all_refs;
+
+    for (const auto &filename : files) {
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+            auto file_refs = process_file(filename, env);
+            dispatch_async(completion_queue, ^{
+                all_refs.insert(all_refs.end(), file_refs.begin(), file_refs.end());
+                completions++;
+                if (completions == files.size()) {
+                    output_refs(env, all_refs);
+                    exit(0);
+                }
+            });
+        });
+    }
+
+    dispatch_main();
+#else
     std::vector<std::future<std::vector<TextRef>>> futures;
     futures.reserve(files.size());
     for (const auto &filename : files) {
@@ -622,6 +654,7 @@ int main(int argc, char **argv)
     }
 
     output_refs(env, all_refs);
+#endif
 
     return 0;
 }
