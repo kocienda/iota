@@ -401,26 +401,32 @@ static void output_refs(const Env &env, std::vector<TextRef> &refs)
 {
     std::sort(refs.begin(), refs.end(), std::less<TextRef>());
 
+    UU::String output(2 * 1024 * 1024);
+
     int count = 1;
     for (auto &ref : refs) {
         ref.set_index(count);
         count++;
         int flags = (env.merge_spans() == MergeSpans::Yes) ? TextRef::CompactFeatures : TextRef::ExtendedFeatures;
         int highlight_color_value = static_cast<int>(env.highlight_color());
-        std::cout << ref.to_string(flags, TextRef::FilenameFormat::RELATIVE, env.current_path(), highlight_color_value) << std::endl;
+        output.append(ref.to_string(flags, TextRef::FilenameFormat::RELATIVE, env.current_path(), highlight_color_value));
+        output += '\n';
     }
+    std::cout << output;
 
     const char *refs_path = getenv("REFS_PATH");
     if (refs_path) {
+        output.clear();
         std::ofstream file(refs_path);
         if (!file.fail()) {
             count = 1;
             for (auto &ref : refs) {
                 ref.set_index(count);
                 count++;
-                std::string str = ref.to_string(TextRef::StandardFeatures, TextRef::FilenameFormat::ABSOLUTE);
-                file << str << std::endl;
+                output.append(ref.to_string(TextRef::StandardFeatures, TextRef::FilenameFormat::ABSOLUTE));
+                output += '\n';
             }
+            file << output;
         } 
     }
 }
