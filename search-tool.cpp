@@ -31,6 +31,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include <functional>
 
 #include <getopt.h>
 #include <stdio.h>
