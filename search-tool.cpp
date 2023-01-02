@@ -24,7 +24,7 @@
 
 #include <algorithm>
 #include <fstream>
-#include <future>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <regex>
@@ -44,6 +44,7 @@
 #if USE_DISPATCH
 #include <dispatch/dispatch.h>
 #else
+#include <future>
 #include <semaphore>
 // this semaphore limits the number of concurrent searches
 const int good_concurrency_count = UU::get_good_concurrency_count() - 1;
