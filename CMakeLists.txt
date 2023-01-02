@@ -16,7 +16,7 @@ set(CXX_WARNING_FLAGS "-Werror -Wno-trigraphs -Wno-missing-field-initializers -W
 -fvisibility-inlines-hidden -fasm-blocks -fstrict-aliasing -fno-common")
 set(CMAKE_CXX_FLAGS "${CXX_VERSION_FLAGS} ${CXX_ARCH_FLAGS} ${CXX_WARNING_FLAGS}")
 set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g")
-set(CMAKE_CXX_FLAGS_RELEASE "-Os -DNDEBUG")
+set(CMAKE_CXX_FLAGS_RELEASE "-Os -DNDEBUG -flto")
 
 IF(DEFINED ENV{UDIR})
 set(PREFIX $ENV{UDIR})
