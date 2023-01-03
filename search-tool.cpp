@@ -418,7 +418,13 @@ static void output_refs(const Env &env, std::vector<TextRef> &refs)
     for (auto &ref : refs) {
         ref.set_index(count);
         count++;
-        int flags = (env.merge_spans() == MergeSpans::Yes) ? TextRef::CompactFeatures : TextRef::ExtendedFeatures;
+        int flags = TextRef::HighlightMessage;
+        if (env.merge_spans() == MergeSpans::Yes) {
+            flags |= TextRef::CompactFeatures;
+        }
+        else {
+            flags |= TextRef::ExtendedFeatures;
+        }
         int highlight_color_value = static_cast<int>(env.highlight_color());
         output.append(ref.to_string(flags, TextRef::FilenameFormat::RELATIVE, env.current_path(), highlight_color_value));
         output += '\n';

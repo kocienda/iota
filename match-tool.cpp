@@ -34,6 +34,9 @@ extern int optind;
 
 namespace fs = std::filesystem;
 
+using UU::SizeType;
+using UU::Span;
+using UU::String;
 using UU::TextRef;
 
 static void version(void)
@@ -75,7 +78,7 @@ static struct option long_options[] =
     {0, 0, 0, 0}
 };
 
-static std::vector<fs::path> find_matches(const fs::path &dir, const std::vector<std::string> &patterns, int flags)
+static std::vector<fs::path> find_matches(const fs::path &dir, const std::vector<String> &patterns, int flags)
 {
     std::vector<fs::path> result;
     fs::directory_options options = fs::directory_options::skip_permission_denied;
@@ -97,6 +100,27 @@ static std::vector<fs::path> find_matches(const fs::path &dir, const std::vector
         }
     }
     return result;
+}
+
+static void add_highlight(TextRef &ref, const String &match, const std::vector<String> &patterns) 
+{
+    Span<SizeType> span;
+    for (const auto &pattern : patterns) {
+        SizeType pos = 0;
+        for (;;) {
+            pos = match.find(pattern, pos);
+            // std::cout << "pos: " << pos << std::endl;
+            if (pos == String::npos || pos >= match.length()) {
+                break;
+            }
+            span.add(pos + 1, pos + pattern.size() + 1);
+            pos++;
+        }
+    }
+    if (span.is_empty<false>()) {
+        span.simplify();
+        ref.add_span(span);
+    }
 }
 
 int main(int argc, char *argv[])
@@ -159,7 +183,8 @@ int main(int argc, char *argv[])
     }
 
     std::vector<fs::path> matches;
-    std::vector<std::string> patterns;
+    std::vector<String> patterns;
+    std::vector<String> all_patterns;
 
     fs::path cwd(fs::current_path());
     fs::path dir;
@@ -176,12 +201,12 @@ int main(int argc, char *argv[])
     int loop_end = option_s ? argc : optind + 1;
 
     for (int i = optind; i < loop_end; i++) {
-        std::string str(argv[i]);
+        String str(argv[i]);
         if (str.length() == 0) {
             continue;
         }
 
-        fs::path path = str;
+        fs::path path = str.c_str();
 
         // determine directory
         if (path.is_absolute()) {
@@ -194,6 +219,7 @@ int main(int argc, char *argv[])
             dir = cwd;
         }
         patterns.push_back(str);
+        all_patterns.push_back(str);
 
         // add to pattern list
         if (!prevdir.empty()) {
@@ -218,7 +244,8 @@ int main(int argc, char *argv[])
             if (matches.size() == 0) {
                 break;
             }
-            std::string pattern = argv[i];
+            String pattern = argv[i];
+            all_patterns.push_back(pattern);
             std::vector<fs::path> filtered_matches;
             for (const auto &match : matches) {
                 if (UU::filename_match(pattern, match, filename_match_flags)) {
@@ -232,17 +259,28 @@ int main(int argc, char *argv[])
     // generate output
     std::stringstream file_out;
     int index = 0;
-    int feature_flags = option_p ? TextRef::Filename : (TextRef::Index | TextRef::Filename);
+    int feature_flags = TextRef::HighlightFilename;
+    if (option_p) {
+        feature_flags |= TextRef::Filename;
+    }
+    else {
+        feature_flags |= (TextRef::Index | TextRef::Filename);
+    }
     const std::string match_ending = option_p ? " " : "\n";
     for (const auto &match : matches) {
         index++;
         TextRef ref(index, match);
+
         file_out << ref.to_string(TextRef::Index | TextRef::Filename, TextRef::FilenameFormat::ABSOLUTE) << std::endl;
         if (option_f) {
-            std::cout << ref.to_string(feature_flags, TextRef::FilenameFormat::ABSOLUTE) << match_ending;
+            String string_match = fs::absolute(match);
+            add_highlight(ref, string_match, all_patterns);
+            std::cout << ref.to_string(feature_flags, TextRef::FilenameFormat::ABSOLUTE, cwd, 92) << match_ending;
         }
         else {
-            std::cout << ref.to_string(feature_flags, TextRef::FilenameFormat::RELATIVE, cwd) << match_ending;
+            String string_match = fs::relative(match);
+            add_highlight(ref, string_match, all_patterns);
+            std::cout << ref.to_string(feature_flags, TextRef::FilenameFormat::RELATIVE, cwd, 92) << match_ending;
         }
     }
 
