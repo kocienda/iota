@@ -34,51 +34,13 @@ extern int optind;
 
 namespace fs = std::filesystem;
 
+using UU::ANSICode;
 using UU::SizeType;
 using UU::Span;
 using UU::String;
 using UU::TextRef;
 
-static void version(void)
-{
-    puts("match : version 4.0");
-}
-
-static void usage(void)
-{
-    version();
-    puts("");
-    puts("Usage: match [options] [pattern]...");
-    puts("");
-    puts("Options:");
-    puts("    -c : Matches patterns with case sensitivity.");
-    puts("    -e : Matches must be exact.");
-    puts("    -f : Prints full paths of matched files to stdout.");
-    puts("    -h : Prints this help message.");
-    puts("    -o : Opens matched files with progam name given.");
-    puts("    -p : Write filenames to stdout without numbers; good for piping results to other programs");
-    puts("    -r : Writes numbered file references to ENV['REFS_PATH'].");
-    puts("    -s : Matches all patterns separately, instead of searching within previous results.");
-    puts("    -v : Prints the program version.");
-    puts("    -1 : Stop at first match found.");
-}
-
-static struct option long_options[] =
-{
-    {"case",      no_argument,       0, 'c'},
-    {"exact",     no_argument,       0, 'e'},
-    {"full path", no_argument,       0, 'f'},
-    {"help",      no_argument,       0, 'h'},
-    {"open",      optional_argument, 0, 'o'},
-    {"pipe",      optional_argument, 0, 'p'},
-    {"refs",      no_argument,       0, 'r'},
-    {"separate",  no_argument,       0, 's'},
-    {"version",   no_argument,       0, 'v'},
-    {"one match", no_argument,       0, '1'},
-    {0, 0, 0, 0}
-};
-
-static std::vector<fs::path> find_matches(const fs::path &dir, const std::vector<String> &patterns, int flags)
+static std::vector<fs::path> find_matches(const fs::path &dir, const std::vector<String> &needles, int flags)
 {
     std::vector<fs::path> result;
     fs::directory_options options = fs::directory_options::skip_permission_denied;
@@ -92,7 +54,7 @@ static std::vector<fs::path> find_matches(const fs::path &dir, const std::vector
         if (!dir_entry.is_regular_file()) {
             continue;
         }
-        for (const auto &pattern : patterns) {
+        for (const auto &pattern : needles) {
             if (UU::filename_match(pattern, path, flags)) {
                 result.push_back(path);
                 break;
@@ -102,14 +64,13 @@ static std::vector<fs::path> find_matches(const fs::path &dir, const std::vector
     return result;
 }
 
-static void add_highlight(TextRef &ref, const String &match, const std::vector<String> &patterns) 
+static void add_highlight(TextRef &ref, const String &match, const std::vector<String> &needles) 
 {
     Span<SizeType> span;
-    for (const auto &pattern : patterns) {
+    for (const auto &pattern : needles) {
         SizeType pos = 0;
         for (;;) {
             pos = match.find(pattern, pos);
-            // std::cout << "pos: " << pos << std::endl;
             if (pos == String::npos || pos >= match.length()) {
                 break;
             }
@@ -123,25 +84,73 @@ static void add_highlight(TextRef &ref, const String &match, const std::vector<S
     }
 }
 
+static void version(void)
+{
+    puts("match : version 4.0");
+}
+
+static void usage(void)
+{
+    version();
+    puts("");
+    puts("Usage: match [options] [pattern]...");
+    puts("");
+    puts("Options:");
+    puts("    -a : Matches any needle given, rather than requiring a line to match all needles.");
+    puts("    -c <color>: Highlights results with the given color. Implies output to a terminal.");
+    puts("                colors: black, gray, red, green, yellow, blue, magenta, cyan, white");
+    puts("    -e : Matches must be exact.");
+    puts("    -f : Prints full paths of matched files to stdout.");
+    puts("    -h : Prints this help message.");
+    puts("    -o : Opens matched files with progam name given, defaults to ENV['EDIT_OPENER'].");
+    puts("    -p : Write filenames to stdout without numbers; good for piping results to other programs");
+    puts("    -r : Writes numbered file references to ENV['REFS_PATH'].");
+    puts("    -i : Case sensitive search.");
+    puts("    -v : Prints the program version.");
+    puts("    -1 : Stop at first match found.");
+}
+
+static struct option long_options[] =
+{
+    {"all-needles",      no_argument,       0, 'a'},
+    {"highlight-color",  required_argument, 0, 'c'},
+    {"exact",            no_argument,       0, 'e'},
+    {"full path",        no_argument,       0, 'f'},
+    {"help",             no_argument,       0, 'h'},
+    {"open",             optional_argument, 0, 'o'},
+    {"pipe",             no_argument,       0, 'p'},
+    {"refs",             no_argument,       0, 'r'},
+    {"case-sensitive",   no_argument,       0, 's'},
+    {"version",          no_argument,       0, 'v'},
+    {"one match",        no_argument,       0, '1'},
+    {0, 0, 0, 0}
+};
+
 int main(int argc, char *argv[])
 {
-    std::string opener;
-    bool option_c = false;
+    bool option_a = false;
     bool option_e = false;
     bool option_f = false;
+    bool option_o = false;
     bool option_p = false;
     bool option_r = false;
     bool option_s = false;
     bool option_1 = false;
 
+    std::string option_c;
+    std::string opener;
+
     while (1) {
         int option_index = 0;
-        int c = getopt_long(argc, argv, "cefho:prsv1", long_options, &option_index);
+        int c = getopt_long(argc, argv, "ac:efho:prsv1", long_options, &option_index);
         if (c == -1)
             break;
         switch (c) {
+            case 'a':
+                option_a = true;
+                break;
             case 'c':
-                option_c = true;
+                option_c = std::string(optarg);
                 break;
             case 'e':
                 option_e = true;
@@ -153,7 +162,10 @@ int main(int argc, char *argv[])
                 usage();
                 return 0;            
             case 'o':
-                opener = optarg;
+                option_o = true;
+                if (argv[optind] != nullptr && optarg != nullptr && optarg[0] != '-') {
+                    opener = std::string(optarg);
+                }
                 break;
             case 'p':
                 option_p = true;
@@ -183,22 +195,22 @@ int main(int argc, char *argv[])
     }
 
     std::vector<fs::path> matches;
-    std::vector<String> patterns;
-    std::vector<String> all_patterns;
+    std::vector<String> needles;
+    std::vector<String> all_needles;
 
     fs::path cwd(fs::current_path());
     fs::path dir;
     fs::path prevdir;
 
     int filename_match_flags = 0;
-    if (option_c) {
+    if (option_s) {
         filename_match_flags |= UU::FilenameMatchCaseSensitive;  
     }
     if (option_e) {
         filename_match_flags |= UU::FilenameMatchExact;  
     }
 
-    int loop_end = option_s ? argc : optind + 1;
+    int loop_end = option_a ? argc : optind + 1;
 
     for (int i = optind; i < loop_end; i++) {
         String str(argv[i]);
@@ -218,34 +230,34 @@ int main(int argc, char *argv[])
         else {
             dir = cwd;
         }
-        patterns.push_back(str);
-        all_patterns.push_back(str);
+        needles.push_back(str);
+        all_needles.push_back(str);
 
         // add to pattern list
         if (!prevdir.empty()) {
             prevdir = dir;
         }
         else if (dir != prevdir) {
-            std::vector<fs::path> submatches(find_matches(dir, patterns, filename_match_flags));
+            std::vector<fs::path> submatches(find_matches(dir, needles, filename_match_flags));
             matches.insert(matches.end(), submatches.begin(), submatches.end());
             prevdir = dir;
-            patterns.clear();
+            needles.clear();
         }
     }
 
-    if (patterns.size()) {
-        std::vector<fs::path> submatches(find_matches(dir, patterns, filename_match_flags));
+    if (needles.size()) {
+        std::vector<fs::path> submatches(find_matches(dir, needles, filename_match_flags));
         matches.insert(matches.end(), submatches.begin(), submatches.end());
     }
 
     // search within previously found matches if needed
-    if (!option_s) {
+    if (!option_a) {
         for (int i = loop_end; i < argc; i++) {
             if (matches.size() == 0) {
                 break;
             }
             String pattern = argv[i];
-            all_patterns.push_back(pattern);
+            all_needles.push_back(pattern);
             std::vector<fs::path> filtered_matches;
             for (const auto &match : matches) {
                 if (UU::filename_match(pattern, match, filename_match_flags)) {
@@ -259,13 +271,16 @@ int main(int argc, char *argv[])
     // generate output
     std::stringstream file_out;
     int index = 0;
-    int feature_flags = TextRef::HighlightFilename;
-    if (option_p) {
-        feature_flags |= TextRef::Filename;
+    int feature_flags = TextRef::Filename;
+    int highlight_color = static_cast<int>(ANSICode::BrightColor::None);
+    if (option_c.length()) {
+        feature_flags |= TextRef::HighlightFilename;
+        highlight_color = static_cast<int>(ANSICode::bright_color_from_string(option_c));
     }
-    else {
-        feature_flags |= (TextRef::Index | TextRef::Filename);
+    if (!option_p) {
+        feature_flags |= TextRef::Index;
     }
+    
     const std::string match_ending = option_p ? " " : "\n";
     for (const auto &match : matches) {
         index++;
@@ -274,13 +289,17 @@ int main(int argc, char *argv[])
         file_out << ref.to_string(TextRef::Index | TextRef::Filename, TextRef::FilenameFormat::ABSOLUTE) << std::endl;
         if (option_f) {
             String string_match = fs::absolute(match);
-            add_highlight(ref, string_match, all_patterns);
-            std::cout << ref.to_string(feature_flags, TextRef::FilenameFormat::ABSOLUTE, cwd, 92) << match_ending;
+            if (option_c.length()) {
+                add_highlight(ref, string_match, all_needles);
+            }
+            std::cout << ref.to_string(feature_flags, TextRef::FilenameFormat::ABSOLUTE, cwd, highlight_color) << match_ending;
         }
         else {
             String string_match = fs::relative(match);
-            add_highlight(ref, string_match, all_patterns);
-            std::cout << ref.to_string(feature_flags, TextRef::FilenameFormat::RELATIVE, cwd, 92) << match_ending;
+            if (option_c.length()) {
+                add_highlight(ref, string_match, all_needles);
+            }
+            std::cout << ref.to_string(feature_flags, TextRef::FilenameFormat::RELATIVE, cwd, highlight_color) << match_ending;
         }
     }
 
@@ -296,7 +315,10 @@ int main(int argc, char *argv[])
     }
 
     // open matches if needed
-    if (!opener.empty() && matches.size()) {
+    if (option_o && matches.size()) {
+        if (opener.empty()) {
+            opener = getenv("EDIT_OPENER");
+        }
         std::vector<std::string> exec_args;
         if (opener == "code") {
             exec_args.push_back("-g");
@@ -305,7 +327,7 @@ int main(int argc, char *argv[])
             exec_args.push_back(match.c_str());
         }
         int rc = UU::launch(opener, exec_args);
-        std::cerr << "*** match: exec error: " << strerror(errno) << std::endl;
+        std::cerr << "*** match: exec error: " << strerror(errno) << ": " << opener << std::endl;
         return rc;
     }
 
