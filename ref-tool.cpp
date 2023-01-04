@@ -148,9 +148,14 @@ int main(int argc, char *argv[])
             return -1;
         }
 
-        std::string str = std::string(UU::string_view_for_line(refs_string_view, line_end_offsets, sidx));
-        UU::TextRef ref(UU::TextRef::from_string(str));    
-        exec_args.push_back(ref.to_string(TextRef::Filename | TextRef::Line |  TextRef::Column));
+        auto str = std::string(UU::string_view_for_line(refs_string_view, line_end_offsets, sidx));
+        if (str.length() > 0 && (str.back() == '\r' || str.back() == '\n')) {
+            str.replace(str.length() - 1, 1, "");
+        }
+        UU::TextRef ref(UU::TextRef::from_string(str)); 
+        std::cout << ref << std::endl;
+        UU::String exec_arg = ref.to_string(TextRef::Filename | TextRef::Line |  TextRef::Column);
+        exec_args.push_back(exec_arg);
     }
 
     if (exec_args.size() == 0) {
