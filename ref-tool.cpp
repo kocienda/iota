@@ -33,7 +33,7 @@
 #include <UU/UU.h>
 
 using UU::MappedFile;
-using UU::SizeType;
+using UU::Size;
 using UU::Span;
 using UU::TextRef;
 using UU::UInt32;
@@ -123,7 +123,7 @@ int main(int argc, char *argv[])
     }
 
     std::string_view refs_string_view((char *)refs_file.base(), refs_file.file_length());
-    std::vector<SizeType> line_end_offsets = UU::find_line_end_offsets(refs_string_view);
+    std::vector<Size> line_end_offsets = UU::find_line_end_offsets(refs_string_view);
 
     Span<UInt32> span;
     for (UInt32 i = optind; i < argc; i++) {

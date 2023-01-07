@@ -35,7 +35,7 @@ extern int optind;
 namespace fs = std::filesystem;
 
 using UU::ANSICode;
-using UU::SizeType;
+using UU::Size;
 using UU::Span;
 using UU::String;
 using UU::TextRef;
@@ -66,9 +66,9 @@ static std::vector<fs::path> find_matches(const fs::path &dir, const std::vector
 
 static void add_highlight(TextRef &ref, const String &match, const std::vector<String> &needles) 
 {
-    Span<SizeType> span;
+    Span<Size> span;
     for (const auto &pattern : needles) {
-        SizeType pos = 0;
+        Size pos = 0;
         for (;;) {
             pos = match.find(pattern, pos);
             if (pos == String::npos || pos >= match.length()) {
