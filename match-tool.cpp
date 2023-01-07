@@ -137,8 +137,8 @@ int main(int argc, char *argv[])
     bool option_s = false;
     bool option_1 = false;
 
-    std::string option_c;
-    std::string opener;
+    String option_c;
+    String opener;
 
     while (1) {
         int option_index = 0;
@@ -150,7 +150,7 @@ int main(int argc, char *argv[])
                 option_a = true;
                 break;
             case 'c':
-                option_c = std::string(optarg);
+                option_c = String(optarg);
                 break;
             case 'e':
                 option_e = true;
@@ -164,7 +164,7 @@ int main(int argc, char *argv[])
             case 'o':
                 option_o = true;
                 if (argv[optind] != nullptr && optarg != nullptr && optarg[0] != '-') {
-                    opener = std::string(optarg);
+                    opener = String(optarg);
                 }
                 break;
             case 'p':
@@ -224,7 +224,7 @@ int main(int argc, char *argv[])
         if (path.is_absolute()) {
             dir = path;
         }
-        else if (str.find_first_of('/') != std::string::npos) {
+        else if (str.find_first_of('/') != String::npos) {
             dir = fs::relative(cwd, path);
         }
         else {
@@ -281,7 +281,7 @@ int main(int argc, char *argv[])
         feature_flags |= TextRef::Index;
     }
     
-    const std::string match_ending = option_p ? " " : "\n";
+    const String match_ending = option_p ? " " : "\n";
     for (const auto &match : matches) {
         index++;
         TextRef ref(index, match);
@@ -319,7 +319,7 @@ int main(int argc, char *argv[])
         if (opener.empty()) {
             opener = getenv("EDIT_OPENER");
         }
-        std::vector<std::string> exec_args;
+        std::vector<String> exec_args;
         if (opener == "code") {
             exec_args.push_back("-g");
         }

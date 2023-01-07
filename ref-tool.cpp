@@ -35,6 +35,8 @@
 using UU::MappedFile;
 using UU::Size;
 using UU::Span;
+using UU::String;
+using UU::StringView;
 using UU::TextRef;
 using UU::UInt32;
 
@@ -69,7 +71,7 @@ static struct option long_options[] =
 
 int main(int argc, char *argv[])
 {
-    std::string opener = getenv("EDIT_OPENER");
+    String opener = getenv("EDIT_OPENER");
     std::filesystem::path refs_path = getenv("REFS_PATH");
 
     while (1) {
@@ -122,12 +124,12 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    std::string_view refs_string_view((char *)refs_file.base(), refs_file.file_length());
+    StringView refs_string_view((char *)refs_file.base(), refs_file.file_length());
     std::vector<Size> line_end_offsets = UU::find_line_end_offsets(refs_string_view);
 
     Span<UInt32> span;
     for (UInt32 i = optind; i < argc; i++) {
-        std::string arg(argv[i]);
+        String arg(argv[i]);
         span.add(arg);
     }
     span.simplify();
@@ -136,7 +138,7 @@ int main(int argc, char *argv[])
         return 0;
     }
 
-    std::vector<std::string> exec_args;
+    std::vector<String> exec_args;
 
     if (opener == "code") {
         exec_args.push_back("-g");

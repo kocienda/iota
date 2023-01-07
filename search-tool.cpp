@@ -59,6 +59,7 @@ using UU::MappedFile;
 using UU::Span;
 using UU::Size;
 using UU::String;
+using UU::StringView;
 using UU::TextRef;
 
 enum class Skip { SkipNone, SkipSkippables };
@@ -83,9 +84,9 @@ class Env
 {
 public:
     Env(const fs::path &current_path,
-        const std::vector<std::string> &string_needles,
+        const std::vector<String> &string_needles,
         const std::vector<std::regex> &regex_needles,
-        const std::string &replacement,
+        const String &replacement,
         TextRef::FilenameFormat filename_format,
         HighlightColor highlight_color,
         MatchType match_type,
@@ -105,9 +106,9 @@ public:
     {}
 
     const fs::path &current_path() const { return m_current_path; }
-    const std::vector<std::string> &string_needles() const { return m_string_needles; }
+    const std::vector<String> &string_needles() const { return m_string_needles; }
     const std::vector<std::regex> &regex_needles() const { return m_regex_needles; }
-    const std::string &replacement() const { return m_replacement; }
+    const String &replacement() const { return m_replacement; }
     TextRef::FilenameFormat filename_format() const { return m_filename_format; }
     HighlightColor highlight_color() const { return m_highlight_color; }
     MatchType match_type() const { return m_match_type; }
@@ -117,9 +118,9 @@ public:
 
 private:
     fs::path m_current_path;
-    std::vector<std::string> m_string_needles;
+    std::vector<String> m_string_needles;
     std::vector<std::regex> m_regex_needles;
-    std::string m_replacement;
+    String m_replacement;
     std::vector<TextRef> m_text_refs;
     TextRef::FilenameFormat m_filename_format;
     HighlightColor m_highlight_color;
@@ -129,9 +130,9 @@ private:
     SearchCase m_search_case;
 };
 
-static HighlightColor highlight_color_from_string(const std::string &s)
+static HighlightColor highlight_color_from_string(const String &s)
 {
-    std::map<std::string, HighlightColor> highlight_colors = {
+    std::map<String, HighlightColor> highlight_colors = {
         {"black", HighlightColor::Black},
         {"gray", HighlightColor::Gray},
         {"red", HighlightColor::Red},
@@ -217,12 +218,12 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
         return results;
     }
 
-    std::string_view source((char *)mapped_file.base(), mapped_file.file_length());
-    std::string_view haystack((char *)mapped_file.base(), mapped_file.file_length());
+    StringView source((char *)mapped_file.base(), mapped_file.file_length());
+    StringView haystack((char *)mapped_file.base(), mapped_file.file_length());
     
-    std::string case_folded_string;
+    String case_folded_string;
     if (env.search_case() == SearchCase::Insensitive) {
-        case_folded_string = std::string(haystack);
+        case_folded_string = String(haystack);
         std::transform(case_folded_string.cbegin(), case_folded_string.cend(), case_folded_string.begin(), 
             [](unsigned char c) { return std::tolower(c); });
         haystack = case_folded_string;
@@ -353,7 +354,7 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
         // add a TextRef for each match
         for (auto &match : matches) {
             Size index = results.size() + 1;
-            std::string line = std::string(source.substr(match.line_start_index(), match.line_length()));
+            String line = String(source.substr(match.line_start_index(), match.line_length()));
             Span<Size> column_span;
             for (const auto &match_range : match.span().ranges()) {
                 Size start_column = match_range.first() - match.line_start_index() + 1;
@@ -376,7 +377,7 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
 
     for (auto &match : matches) {
         // set up the source line and span for the replacement TextRef        
-        std::string_view source_line = std::string_view(source.substr(match.line_start_index(), match.line_length()));
+        StringView source_line = StringView(source.substr(match.line_start_index(), match.line_length()));
         output_line.clear();
         output_line.reserve(source_line.length() + (match.span().ranges().size() * env.replacement().length()));
         Span<Size> output_span;
@@ -516,7 +517,7 @@ int main(int argc, char **argv)
     bool option_s = false;
     bool option_t = false;
 
-    std::string option_c;
+    String option_c;
 
     while (1) {
         int option_index = 0;
@@ -529,7 +530,7 @@ int main(int argc, char **argv)
                 option_a = true;
                 break;
             case 'c':
-                option_c = std::string(optarg);
+                option_c = String(optarg);
                 break;
             case 'e':
                 option_e = true;
@@ -573,7 +574,7 @@ int main(int argc, char **argv)
         exit(-1);
     }
     
-    std::vector<std::string> string_needles;
+    std::vector<String> string_needles;
     std::vector<std::regex> regex_needles;
     std::regex::flag_type regex_flags = std::regex::egrep | std::regex::optimize;
     if (option_i) {
@@ -582,7 +583,7 @@ int main(int argc, char **argv)
 
     int needle_count = option_r ? argc - 1 : argc;
 
-    std::string replacement;
+    String replacement;
     if (option_r) {
         if (needle_count - optind != 1) {
             usage();
@@ -599,7 +600,7 @@ int main(int argc, char **argv)
             regex_needles.emplace_back(arg, regex_flags);
         }
         else {
-            std::string needle(arg);
+            String needle(arg);
             if (option_i) {
                 std::transform(needle.cbegin(), needle.cend(), needle.begin(), [](unsigned char c) { return std::tolower(c); });    
             }
