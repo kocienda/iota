@@ -273,16 +273,20 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
 
     // set line-related metadata for the match
     std::vector<Size> haystack_line_end_offsets = UU::find_line_end_offsets(haystack, matches.back().match_start_index());
+
     Size line = 0;
     for (auto &match : matches) {
         while (haystack_line_end_offsets[line] < match.match_start_index()) {
             line++;
             ASSERT(line < haystack_line_end_offsets.size());
         }
-        Size sidx = line == 0 ? 0 : (haystack_line_end_offsets[line -1] + 1);
-        Size eidx = haystack_line_end_offsets[line];
-        match.set_line_start_index(sidx);
-        match.set_line_length(eidx - sidx);
+        const auto &offsets = UU::offsets_for_line(haystack, haystack_line_end_offsets, line + 1);
+        const Size sidx = offsets.first;
+        const Size eidx = offsets.second;
+        if (sidx != String::npos && eidx != String::npos) {
+            match.set_line_start_index(sidx);
+            match.set_line_length(eidx - sidx);
+        }
         match.set_line(line + 1);
     }
 
@@ -569,8 +573,6 @@ int main(int argc, char **argv)
         exit(-1);
     }
     
-    LOG(General, "sizeof String: %ld", sizeof(UU::String));
-
     std::vector<std::string> string_needles;
     std::vector<std::regex> regex_needles;
     std::regex::flag_type regex_flags = std::regex::egrep | std::regex::optimize;
