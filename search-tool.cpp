@@ -356,9 +356,9 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
             Size index = results.size() + 1;
             String line = String(source.substr(match.line_start_index(), match.line_length()));
             Spread<Size> column_spread;
-            for (const auto &match_sweep : match.spread().sweeps()) {
-                Size start_column = match_sweep.first() - match.line_start_index() + 1;
-                Size end_column = match_sweep.last() - match.line_start_index() + 1;
+            for (const auto &match_stretch : match.spread().stretches()) {
+                Size start_column = match_stretch.first() - match.line_start_index() + 1;
+                Size end_column = match_stretch.last() - match.line_start_index() + 1;
                 column_spread.add(start_column, end_column);
             }
             results.push_back(TextRef(index, filename, match.line(), column_spread, line));
@@ -379,25 +379,25 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
         // set up the source line and spread for the replacement TextRef        
         StringView source_line = StringView(source.substr(match.line_start_index(), match.line_length()));
         output_line.clear();
-        output_line.reserve(source_line.length() + (match.spread().sweeps().size() * env.replacement().length()));
+        output_line.reserve(source_line.length() + (match.spread().stretches().size() * env.replacement().length()));
         Spread<Size> output_spread;
         Size output_line_index = 0;
         
-        for (const auto &match_sweep : match.spread().sweeps()) {
+        for (const auto &match_stretch : match.spread().stretches()) {
             // do the search and replace for the output file
-            output += source.substr(source_index, match_sweep.first() - source_index);
+            output += source.substr(source_index, match_stretch.first() - source_index);
             output += env.replacement();
-            source_index += (match_sweep.first() - source_index);
-            source_index += match_sweep.length();
+            source_index += (match_stretch.first() - source_index);
+            source_index += match_stretch.length();
 
             // do the search and replace for the TextRef       
-            Size start_column = match_sweep.first() - match.line_start_index();
+            Size start_column = match_stretch.first() - match.line_start_index();
             output_line += source_line.substr(output_line_index, start_column - output_line_index);
             Size replacement_start_column = output_line.length() + 1;
             output_line += env.replacement();
             Size replacement_end_column = output_line.length() + 1;
             output_line_index += (start_column - output_line_index);
-            output_line_index += match_sweep.length();
+            output_line_index += match_stretch.length();
             output_spread.add(replacement_start_column, replacement_end_column);
         }
         // append any remaining text on the output line
