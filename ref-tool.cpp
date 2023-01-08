@@ -34,7 +34,7 @@
 
 using UU::MappedFile;
 using UU::Size;
-using UU::Span;
+using UU::Spread;
 using UU::String;
 using UU::StringView;
 using UU::TextRef;
@@ -127,14 +127,14 @@ int main(int argc, char *argv[])
     StringView refs_string_view((char *)refs_file.base(), refs_file.file_length());
     std::vector<Size> line_end_offsets = UU::find_line_end_offsets(refs_string_view);
 
-    Span<UInt32> span;
+    Spread<UInt32> spread;
     for (UInt32 i = optind; i < argc; i++) {
         String arg(argv[i]);
-        span.add(arg);
+        spread.add(arg);
     }
-    span.simplify();
+    spread.simplify();
 
-    if (span.is_empty()) {
+    if (spread.is_empty()) {
         return 0;
     }
 
@@ -144,7 +144,7 @@ int main(int argc, char *argv[])
         exec_args.push_back("-g");
     }
 
-    for (UInt32 sidx : span) {
+    for (UInt32 sidx : spread) {
         if (sidx <= 0 || sidx > line_end_offsets.size()) {
             std::cerr << "*** no such ref: " << sidx << std::endl;
             return -1;

@@ -36,7 +36,7 @@ namespace fs = std::filesystem;
 
 using UU::ANSICode;
 using UU::Size;
-using UU::Span;
+using UU::Spread;
 using UU::String;
 using UU::TextRef;
 
@@ -66,7 +66,7 @@ static std::vector<fs::path> find_matches(const fs::path &dir, const std::vector
 
 static void add_highlight(TextRef &ref, const String &match, const std::vector<String> &needles) 
 {
-    Span<Size> span;
+    Spread<Size> spread;
     for (const auto &pattern : needles) {
         Size pos = 0;
         for (;;) {
@@ -74,13 +74,13 @@ static void add_highlight(TextRef &ref, const String &match, const std::vector<S
             if (pos == String::npos || pos >= match.length()) {
                 break;
             }
-            span.add(pos + 1, pos + pattern.size() + 1);
+            spread.add(pos + 1, pos + pattern.size() + 1);
             pos++;
         }
     }
-    if (span.is_empty<false>()) {
-        span.simplify();
-        ref.add_span(span);
+    if (spread.is_empty<false>()) {
+        spread.simplify();
+        ref.add_spread(spread);
     }
 }
 

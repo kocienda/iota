@@ -56,7 +56,7 @@ extern int optind;
 namespace fs = std::filesystem;
 
 using UU::MappedFile;
-using UU::Span;
+using UU::Spread;
 using UU::Size;
 using UU::String;
 using UU::StringView;
@@ -78,7 +78,7 @@ enum class HighlightColor {
     Cyan = 96,
     White = 97,
 };
-enum class MergeSpans { No, Yes };
+enum class MergeSpreads { No, Yes };
 
 class Env
 {
@@ -90,7 +90,7 @@ public:
         TextRef::FilenameFormat filename_format,
         HighlightColor highlight_color,
         MatchType match_type,
-        MergeSpans merge_spans,
+        MergeSpreads merge_spreads,
         Mode mode,
         SearchCase search_case) :
         m_current_path(current_path),
@@ -100,7 +100,7 @@ public:
         m_filename_format(filename_format),
         m_highlight_color(highlight_color),
         m_match_type(match_type),
-        m_merge_spans(merge_spans),
+        m_merge_spreads(merge_spreads),
         m_mode(mode),
         m_search_case(search_case) 
     {}
@@ -112,7 +112,7 @@ public:
     TextRef::FilenameFormat filename_format() const { return m_filename_format; }
     HighlightColor highlight_color() const { return m_highlight_color; }
     MatchType match_type() const { return m_match_type; }
-    MergeSpans merge_spans() const { return m_merge_spans; }
+    MergeSpreads merge_spreads() const { return m_merge_spreads; }
     Mode mode() const { return m_mode; }
     SearchCase search_case() const { return m_search_case; }
 
@@ -125,7 +125,7 @@ private:
     TextRef::FilenameFormat m_filename_format;
     HighlightColor m_highlight_color;
     MatchType m_match_type;
-    MergeSpans m_merge_spans;
+    MergeSpreads m_merge_spreads;
     Mode m_mode;
     SearchCase m_search_case;
 };
@@ -174,16 +174,16 @@ class Match
 public:
     Match() {}
     Match(Size needle_index, Size match_start_index, Size match_length) : 
-        m_needle_index(needle_index), m_span(match_start_index, match_start_index + match_length) {}
+        m_needle_index(needle_index), m_spread(match_start_index, match_start_index + match_length) {}
 
     Size needle_index() const { return m_needle_index; }
     void set_needle_index(Size needle_index) { m_needle_index = needle_index; }
 
-    Size match_start_index() const { return m_span.first(); }
+    Size match_start_index() const { return m_spread.first(); }
 
-    const Span<Size> &span() const { return m_span; }
-    void add_span(const Span<Size> &span) { m_span.add(span); }
-    void simplify_span() { m_span.simplify(); }
+    const Spread<Size> &spread() const { return m_spread; }
+    void add_spread(const Spread<Size> &spread) { m_spread.add(spread); }
+    void simplify_spread() { m_spread.simplify(); }
 
     Size line_start_index() const { return m_line_start_index; }
     void set_line_start_index(Size line_start_index) { m_line_start_index = line_start_index; }
@@ -198,7 +198,7 @@ public:
 
 private:
     Size m_needle_index = 0;
-    Span<Size> m_span;
+    Spread<Size> m_spread;
     Size m_line_start_index = 0;
     Size m_line_length = 0;
     Size m_line = 0;
@@ -329,15 +329,15 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
         return results;
     }
 
-    // merge spans if needed so each TextRef will contain all the matches for a line
-    if (env.merge_spans() == MergeSpans::Yes) {
+    // merge spreads if needed so each TextRef will contain all the matches for a line
+    if (env.merge_spreads() == MergeSpreads::Yes) {
         std::vector<Match> filtered_matches;
         filtered_matches.reserve(matches.size());
         Size current_line = 0;
         for (auto &match : matches) {
             if (current_line == match.line()) {
                 auto &back_match = filtered_matches.back();
-                back_match.add_span(match.span());
+                back_match.add_spread(match.spread());
             }
             else {
                 current_line = match.line();
@@ -346,7 +346,7 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
         }
         matches = filtered_matches;
         for (auto &match : matches) {
-            match.simplify_span();
+            match.simplify_spread();
         }
     }
 
@@ -355,13 +355,13 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
         for (auto &match : matches) {
             Size index = results.size() + 1;
             String line = String(source.substr(match.line_start_index(), match.line_length()));
-            Span<Size> column_span;
-            for (const auto &match_range : match.span().ranges()) {
+            Spread<Size> column_spread;
+            for (const auto &match_range : match.spread().ranges()) {
                 Size start_column = match_range.first() - match.line_start_index() + 1;
                 Size end_column = match_range.last() - match.line_start_index() + 1;
-                column_span.add(start_column, end_column);
+                column_spread.add(start_column, end_column);
             }
-            results.push_back(TextRef(index, filename, match.line(), column_span, line));
+            results.push_back(TextRef(index, filename, match.line(), column_spread, line));
         }
         return results;
     }
@@ -376,14 +376,14 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
     String output_line;
 
     for (auto &match : matches) {
-        // set up the source line and span for the replacement TextRef        
+        // set up the source line and spread for the replacement TextRef        
         StringView source_line = StringView(source.substr(match.line_start_index(), match.line_length()));
         output_line.clear();
-        output_line.reserve(source_line.length() + (match.span().ranges().size() * env.replacement().length()));
-        Span<Size> output_span;
+        output_line.reserve(source_line.length() + (match.spread().ranges().size() * env.replacement().length()));
+        Spread<Size> output_spread;
         Size output_line_index = 0;
         
-        for (const auto &match_range : match.span().ranges()) {
+        for (const auto &match_range : match.spread().ranges()) {
             // do the search and replace for the output file
             output += source.substr(source_index, match_range.first() - source_index);
             output += env.replacement();
@@ -398,14 +398,14 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
             Size replacement_end_column = output_line.length() + 1;
             output_line_index += (start_column - output_line_index);
             output_line_index += match_range.length();
-            output_span.add(replacement_start_column, replacement_end_column);
+            output_spread.add(replacement_start_column, replacement_end_column);
         }
         // append any remaining text on the output line
         output_line += source_line.substr(output_line_index);
 
         // make the TextRef with the replaced text
         Size index = results.size() + 1;
-        results.emplace_back(index, filename, match.line(), output_span, output_line);
+        results.emplace_back(index, filename, match.line(), output_spread, output_line);
     }
     // append any remaining text on the output file
     output += source.substr(source_index);
@@ -429,7 +429,7 @@ static void output_refs(const Env &env, std::vector<TextRef> &refs)
         ref.set_index(count);
         count++;
         int flags = TextRef::HighlightMessage;
-        if (env.merge_spans() == MergeSpans::Yes) {
+        if (env.merge_spreads() == MergeSpreads::Yes) {
             flags |= TextRef::CompactFeatures;
         }
         else {
@@ -622,7 +622,7 @@ int main(int argc, char **argv)
         filename_format = TextRef::FilenameFormat::TERSE;
     }
     HighlightColor highlight_color = HighlightColor::None;
-    MergeSpans merge_spans = option_l ? MergeSpans::No : MergeSpans::Yes;
+    MergeSpreads merge_spreads = option_l ? MergeSpreads::No : MergeSpreads::Yes;
     if (option_c.length() > 0) {
         highlight_color = highlight_color_from_string(option_c);
         if (highlight_color == HighlightColor::None) {
@@ -642,7 +642,7 @@ int main(int argc, char **argv)
             filename_format,
             highlight_color,
             match_type,
-            merge_spans,
+            merge_spreads,
             mode,
             search_case);
 
