@@ -40,18 +40,25 @@ using UU::Spread;
 using UU::String;
 using UU::TextRef;
 
-static std::vector<fs::path> find_matches(const fs::path &dir, const std::vector<String> &needles, int flags)
+enum class IncludeDirectries { No, Yes };
+
+static std::vector<fs::path> find_matches(const fs::path &dir, const std::vector<String> &needles, int flags, 
+    IncludeDirectries include_directories = IncludeDirectries::No)
 {
     std::vector<fs::path> result;
     fs::directory_options options = fs::directory_options::skip_permission_denied;
     for (auto it = fs::recursive_directory_iterator(dir, options); it != fs::recursive_directory_iterator(); ++it) {
         const fs::directory_entry &dir_entry = *it;
         const fs::path &path = dir_entry.path();
-        if (dir_entry.is_directory() && UU::is_skippable(UU::skippable_paths(), path)) {
+        bool is_directory = dir_entry.is_directory();
+        if (is_directory && UU::is_skippable(UU::skippable_paths(), path)) {
             it.disable_recursion_pending();
             continue;
         }
-        if (!dir_entry.is_regular_file()) {
+        if (is_directory && include_directories == IncludeDirectries::Yes) {
+            // keep going
+        }
+        else if (!dir_entry.is_regular_file()) {
             continue;
         }
         for (const auto &pattern : needles) {
@@ -99,6 +106,7 @@ static void usage(void)
     puts("    -a : Matches any needle given, rather than requiring a line to match all needles.");
     puts("    -c <color>: Highlights results with the given color. Implies output to a terminal.");
     puts("                colors: black, gray, red, green, yellow, blue, magenta, cyan, white");
+    puts("    -d : Consider directories as potential matches.");
     puts("    -e : Matches must be exact.");
     puts("    -f : Prints full paths of matched files to stdout.");
     puts("    -h : Prints this help message.");
@@ -114,6 +122,7 @@ static struct option long_options[] =
 {
     {"all-needles",      no_argument,       0, 'a'},
     {"highlight-color",  required_argument, 0, 'c'},
+    {"directories",      no_argument,       0, 'd'},
     {"exact",            no_argument,       0, 'e'},
     {"full path",        no_argument,       0, 'f'},
     {"help",             no_argument,       0, 'h'},
@@ -129,6 +138,7 @@ static struct option long_options[] =
 int main(int argc, char *argv[])
 {
     bool option_a = false;
+    bool option_d = false;
     bool option_e = false;
     bool option_f = false;
     bool option_o = false;
@@ -142,7 +152,7 @@ int main(int argc, char *argv[])
 
     while (1) {
         int option_index = 0;
-        int c = getopt_long(argc, argv, "ac:efho:prsv1", long_options, &option_index);
+        int c = getopt_long(argc, argv, "ac:defho:prsv1", long_options, &option_index);
         if (c == -1)
             break;
         switch (c) {
@@ -151,6 +161,9 @@ int main(int argc, char *argv[])
                 break;
             case 'c':
                 option_c = String(optarg);
+                break;
+            case 'd':
+                option_d = true;
                 break;
             case 'e':
                 option_e = true;
@@ -210,6 +223,8 @@ int main(int argc, char *argv[])
         filename_match_flags |= UU::FilenameMatchExact;  
     }
 
+    IncludeDirectries include_directories = option_d ? IncludeDirectries::Yes : IncludeDirectries::No;
+
     int loop_end = option_a ? argc : optind + 1;
 
     for (int i = optind; i < loop_end; i++) {
@@ -238,7 +253,7 @@ int main(int argc, char *argv[])
             prevdir = dir;
         }
         else if (dir != prevdir) {
-            std::vector<fs::path> submatches(find_matches(dir, needles, filename_match_flags));
+            std::vector<fs::path> submatches(find_matches(dir, needles, filename_match_flags, include_directories));
             matches.insert(matches.end(), submatches.begin(), submatches.end());
             prevdir = dir;
             needles.clear();
@@ -246,7 +261,7 @@ int main(int argc, char *argv[])
     }
 
     if (needles.size()) {
-        std::vector<fs::path> submatches(find_matches(dir, needles, filename_match_flags));
+        std::vector<fs::path> submatches(find_matches(dir, needles, filename_match_flags, include_directories));
         matches.insert(matches.end(), submatches.begin(), submatches.end());
     }
 
