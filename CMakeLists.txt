@@ -13,7 +13,7 @@ set(CXX_WARNING_FLAGS "-Werror -Wno-trigraphs -Wno-missing-field-initializers -W
 -Wint-conversion -Wbool-conversion -Wenum-conversion -Wno-float-conversion -Wnon-literal-null-conversion \
 -Wshorten-64-to-32 -Wno-newline-eof -Wno-c++11-extensions -Wdeprecated-declarations -Winvalid-offsetof -Wno-sign-conversion \
 -Winfinite-recursion -Wmove -Wcomma -Wstrict-prototypes -Wrange-loop-analysis -Wunguarded-availability -Wno-nullability-completeness \
--fvisibility-inlines-hidden -fasm-blocks -fstrict-aliasing -fno-common")
+-fvisibility-inlines-hidden -fasm-blocks -fstrict-aliasing -fno-common -fexperimental-library")
 set(CMAKE_CXX_FLAGS "${CXX_VERSION_FLAGS} ${CXX_ARCH_FLAGS} ${CXX_WARNING_FLAGS}")
 set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g")
 set(CMAKE_CXX_FLAGS_RELEASE "-Os -DNDEBUG -flto")
@@ -31,13 +31,17 @@ enable_testing()
 
 find_package(UU REQUIRED)
 
-add_executable(ref ref-tool.cpp)
 add_executable(match match-tool.cpp)
 add_executable(search search-tool.cpp)
+add_executable(ref ref-tool.cpp)
 
 target_include_directories(ref PRIVATE "${PREFIX}/include")
 target_include_directories(match PRIVATE "${PREFIX}/include")
 target_include_directories(search PRIVATE "${PREFIX}/include")
+
+target_link_directories(ref PRIVATE "${PREFIX}/lib")
+target_link_directories(match PRIVATE "${PREFIX}/lib")
+target_link_directories(search PRIVATE "${PREFIX}/lib")
 
 target_link_libraries(ref UU)
 target_link_libraries(match UU)

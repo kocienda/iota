@@ -79,6 +79,7 @@ enum class HighlightColor {
     White = 97,
 };
 enum class MergeSpreads { No, Yes };
+enum class LimitToSearchables { No, Yes };
 
 class Env
 {
@@ -92,7 +93,9 @@ public:
         MatchType match_type,
         MergeSpreads merge_spreads,
         Mode mode,
-        SearchCase search_case) :
+        SearchCase search_case,
+        Skip skip,
+        LimitToSearchables limit_to_searchables) :
         m_current_path(current_path),
         m_string_needles(string_needles),
         m_regex_needles(regex_needles),
@@ -102,7 +105,9 @@ public:
         m_match_type(match_type),
         m_merge_spreads(merge_spreads),
         m_mode(mode),
-        m_search_case(search_case) 
+        m_search_case(search_case),
+        m_skip(skip),
+        m_limit_to_searchables(limit_to_searchables)
     {}
 
     const fs::path &current_path() const { return m_current_path; }
@@ -115,6 +120,8 @@ public:
     MergeSpreads merge_spreads() const { return m_merge_spreads; }
     Mode mode() const { return m_mode; }
     SearchCase search_case() const { return m_search_case; }
+    Skip skip() const { return m_skip; }
+    LimitToSearchables limit_to_searchables() const { return m_limit_to_searchables; }
 
 private:
     fs::path m_current_path;
@@ -128,6 +135,8 @@ private:
     MergeSpreads m_merge_spreads;
     Mode m_mode;
     SearchCase m_search_case;
+    Skip m_skip;
+    LimitToSearchables m_limit_to_searchables;
 };
 
 static HighlightColor highlight_color_from_string(const String &s)
@@ -148,21 +157,21 @@ static HighlightColor highlight_color_from_string(const String &s)
     return r == highlight_colors.end() ? HighlightColor::None : r->second;
 }
 
-static std::vector<fs::path> build_file_list(const fs::path &dir, Skip skip = Skip::SkipSkippables)
+static std::vector<fs::path> build_file_list(const Env &env, const fs::path &dir)
 {
     std::vector<fs::path> result;
     fs::directory_options options = fs::directory_options::skip_permission_denied;
     for (auto it = fs::recursive_directory_iterator(dir, options); it != fs::recursive_directory_iterator(); ++it) {
         const fs::directory_entry &dir_entry = *it;
         const fs::path &path = dir_entry.path();
-        if (dir_entry.is_directory() && skip == Skip::SkipSkippables && UU::is_skippable(UU::skippable_paths(), path)) {
+        if (dir_entry.is_directory() && env.skip() == Skip::SkipSkippables && UU::is_skippable(UU::skippable_paths(), path)) {
             it.disable_recursion_pending();
             continue;
         }
         if (!dir_entry.is_regular_file()) {
             continue;
         }
-        if (UU::is_searchable(UU::searchable_paths(), path)) {
+        if (env.limit_to_searchables() == LimitToSearchables::No || UU::is_searchable(UU::searchable_paths(), path)) {
             result.push_back(path);
         }
     }
@@ -470,7 +479,8 @@ static void usage(void)
     puts("Usage: search [options] <search-string>...");
     puts("");
     puts("Options:");
-    puts("    -a : Matches any needle given, rather than requiring a line to match all needles.");
+    puts("    -a : Search all files in all directories not skipped (see -s option),");
+    puts("             i.e., not just those listed in ENV['SEARCHABLES'].");
     puts("    -c <color>: Highlights results with the given color. Implies output to a terminal.");
     puts("                colors: black, gray, red, green, yellow, blue, magenta, cyan, white");
     puts(" ");
@@ -485,11 +495,12 @@ static void usage(void)
     puts("    -s : Search for files in all directories, including those in ENV['SKIPPABLES_PATH'].");
     puts("    -t : Print filenames in terse format (filename only; no preceding path).");
     puts("    -v : Prints the program version.");
+    puts("    -y : Matches any needle given, rather than requiring a line to match all needles.");
 }
 
 static struct option long_options[] =
 {
-    {"all-needles",       no_argument,       0, 'a'},
+    {"all-files",         no_argument,       0, 'a'},
     {"highlight-color",   required_argument, 0, 'c'},
     {"regex-search",      no_argument,       0, 'e'},
     {"help",              no_argument,       0, 'h'},
@@ -500,6 +511,7 @@ static struct option long_options[] =
     {"search-skippables", no_argument,       0, 's'},
     {"terse",             no_argument,       0, 't'},
     {"version",           no_argument,       0, 'v'},
+    {"any-needle",        no_argument,       0, 'y'},
     {0, 0, 0, 0}
 };
 
@@ -516,12 +528,13 @@ int main(int argc, char **argv)
     bool option_r = false;
     bool option_s = false;
     bool option_t = false;
+    bool option_y = false;
 
     String option_c;
 
     while (1) {
         int option_index = 0;
-        int c = getopt_long(argc, argv, "ac:ehilnrstv", long_options, &option_index);
+        int c = getopt_long(argc, argv, "ac:ehilnrstvy", long_options, &option_index);
         if (c == -1)
             break;
     
@@ -559,6 +572,9 @@ int main(int argc, char **argv)
             case 'v':
                 version();
                 return 0;            
+            case 'y':
+                option_y = true;
+                break;
             case '?':
                 version();
                 return 0;            
@@ -609,7 +625,7 @@ int main(int argc, char **argv)
     }
     
     SearchCase search_case = option_i ? SearchCase::Insensitive : SearchCase::Sensitive;
-    MatchType match_type = option_a ? MatchType::Any : MatchType::All;
+    MatchType match_type = option_y ? MatchType::Any : MatchType::All;
     Mode mode = Mode::Search;
     if (option_r) {
         mode = Mode::SearchAndReplace;
@@ -632,8 +648,8 @@ int main(int argc, char **argv)
         }
     }
 
-    fs::path current_path = fs::current_path();
-    const auto &files = build_file_list(current_path, option_s ? Skip::SkipNone : Skip::SkipSkippables);
+    Skip skip = option_s ? Skip::SkipNone : Skip::SkipSkippables;
+    LimitToSearchables limit_to_searchables = option_a ? LimitToSearchables::No : LimitToSearchables::Yes;
 
     Env env(fs::current_path(),
             string_needles,
@@ -644,7 +660,12 @@ int main(int argc, char **argv)
             match_type,
             merge_spreads,
             mode,
-            search_case);
+            search_case,
+            skip,
+            limit_to_searchables);
+
+    fs::path current_path = fs::current_path();
+    const auto &files = build_file_list(env, current_path);
 
 #if USE_DISPATCH
     dispatch_queue_t completion_queue = dispatch_queue_create("iota-search", DISPATCH_QUEUE_SERIAL);
