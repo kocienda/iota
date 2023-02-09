@@ -2,6 +2,8 @@
 # CMakeLists.txt for iota
 #
 cmake_minimum_required(VERSION 3.0.0)
+
+# Set the project name and version
 project(iota VERSION 0.1.0)
 
 set(CXX_VERSION_FLAGS "-std=c++20")
@@ -25,9 +27,6 @@ ELSE()
 set(PREFIX /usr/local)
 set(CMAKE_INSTALL_PREFIX ${PREFIX})
 ENDIF()
-
-include(CTest)
-enable_testing()
 
 find_package(UU REQUIRED)
 

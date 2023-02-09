@@ -55,13 +55,14 @@ extern int optind;
 
 namespace fs = std::filesystem;
 
+using UU::Allocator;
+using UU::Context;
 using UU::MappedFile;
 using UU::Spread;
 using UU::Size;
 using UU::String;
 using UU::StringView;
 using UU::TextRef;
-using UU::cast_size;
 
 enum class Skip { SkipNone, SkipSkippables };
 enum class Mode { Search, SearchAndReplace, SearchAndReplaceDryRun };
@@ -275,7 +276,7 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
 
     // code below needs needles sorted by start index,
     // but only do the work if there is more than one needle
-    Size needle_count = cast_size(env.string_needles().size()) + cast_size(env.regex_needles().size());
+    Size needle_count = env.string_needles().size() + env.regex_needles().size();
     if (needle_count > 1) {
         std::sort(matches.begin(), matches.end(), [](const Match &a, const Match &b) { 
             return a.match_start_index() < b.match_start_index(); 
@@ -363,7 +364,7 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
     if (env.mode() == Mode::Search) {
         // add a TextRef for each match
         for (auto &match : matches) {
-            Size index = cast_size(results.size()) + 1;
+            Size index = results.size() + 1;
             String line = String(source.substr(match.line_start_index(), match.line_length()));
             Spread<Size> column_spread;
             for (const auto &match_stretch : match.spread().stretches()) {
@@ -381,7 +382,7 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
     // set up a string to hold the new string after the search and replace operation
     // estimate the size by adding the length of the replacement for each match
     String output;
-    output.reserve(cast_size(source.length()) + cast_size((matches.size() * env.replacement().length())));
+    output.reserve(source.length() + (matches.size() * env.replacement().length()));
     Size source_index = 0;
     String output_line;
 
@@ -389,7 +390,7 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
         // set up the source line and spread for the replacement TextRef        
         StringView source_line = StringView(source.substr(match.line_start_index(), match.line_length()));
         output_line.clear();
-        output_line.reserve(cast_size(source_line.length()) + cast_size((match.spread().stretches().size()) * env.replacement().length()));
+        output_line.reserve(source_line.length() + (match.spread().stretches().size()) * env.replacement().length());
         Spread<Size> output_spread;
         Size output_line_index = 0;
         
@@ -414,7 +415,7 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
         output_line += source_line.substr(output_line_index);
 
         // make the TextRef with the replaced text
-        Size index = cast_size(results.size()) + 1;
+        Size index = results.size() + 1;
         results.emplace_back(index, filename, match.line(), output_spread, output_line);
     }
     // append any remaining text on the output file
@@ -446,7 +447,7 @@ static void output_refs(const Env &env, std::vector<TextRef> &refs)
             flags |= TextRef::ExtendedFeatures;
         }
         int highlight_color_value = static_cast<int>(env.highlight_color());
-        output.append(ref.to_string(flags, env.filename_format(), env.current_path(), highlight_color_value));
+        ref.write_to_string(output, flags, env.filename_format(), env.current_path(), highlight_color_value);
         output += '\n';
     }
     std::cout << output;
@@ -460,7 +461,7 @@ static void output_refs(const Env &env, std::vector<TextRef> &refs)
             for (auto &ref : refs) {
                 ref.set_index(count);
                 count++;
-                output.append(ref.to_string(TextRef::StandardFeatures, TextRef::FilenameFormat::ABSOLUTE));
+                ref.write_to_string(output, TextRef::StandardFeatures, TextRef::FilenameFormat::ABSOLUTE);
                 output += '\n';
             }
             file << output;
@@ -518,8 +519,10 @@ static struct option long_options[] =
 
 int main(int argc, char **argv)
 {
+    Context::init();
+
     LOG_CHANNEL_ON(General);
-    LOG_CHANNEL_ON(Error);
+    LOG_CHANNEL_ON(Memory);
 
     bool option_a = false;
     bool option_e = false;
