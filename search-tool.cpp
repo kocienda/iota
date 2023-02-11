@@ -56,13 +56,15 @@ extern int optind;
 namespace fs = std::filesystem;
 
 using UU::Allocator;
-using UU::Context;
 using UU::MappedFile;
 using UU::Spread;
 using UU::Size;
 using UU::String;
 using UU::StringView;
 using UU::TextRef;
+
+std::mutex g_lock;
+std::vector<TextRef> g_text_refs;
 
 enum class Skip { SkipNone, SkipSkippables };
 enum class Mode { Search, SearchAndReplace, SearchAndReplaceDryRun };
@@ -130,7 +132,6 @@ private:
     std::vector<String> m_string_needles;
     std::vector<std::regex> m_regex_needles;
     String m_replacement;
-    std::vector<TextRef> m_text_refs;
     TextRef::FilenameFormat m_filename_format;
     HighlightColor m_highlight_color;
     MatchType m_match_type;
@@ -215,18 +216,16 @@ private:
     Size m_line = 0;
 };
 
-std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
+void process_file(const fs::path &filename, const Env &env)
 {
 #if !USE_DISPATCH
     // The guard releases the semaphore regardless of how the function exits
     UU::AcquireReleaseGuard semaphore_guard(g_semaphore);
 #endif
 
-    std::vector<TextRef> results;
-
     MappedFile mapped_file(filename);
     if (mapped_file.is_valid<false>()) {
-        return results;
+        return;
     }
 
     StringView source((char *)mapped_file.base(), mapped_file.file_length());
@@ -271,7 +270,7 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
 
     // return if nothing found
     if (matches.size() == 0) {
-        return results;
+        return;
     }
 
     // code below needs needles sorted by start index,
@@ -337,7 +336,7 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
 
     // return if all the matches got filtered out
     if (matches.size() == 0) {
-        return results;
+        return;
     }
 
     // merge spreads if needed so each TextRef will contain all the matches for a line
@@ -362,9 +361,9 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
     }
 
     if (env.mode() == Mode::Search) {
+        g_lock.lock();
         // add a TextRef for each match
         for (auto &match : matches) {
-            Size index = results.size() + 1;
             String line = String(source.substr(match.line_start_index(), match.line_length()));
             Spread<Size> column_spread;
             for (const auto &match_stretch : match.spread().stretches()) {
@@ -372,9 +371,10 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
                 Size end_column = match_stretch.last() - match.line_start_index() + 1;
                 column_spread.add(start_column, end_column);
             }
-            results.push_back(TextRef(index, filename, match.line(), column_spread, line));
+            g_text_refs.emplace_back(0, filename, match.line(), column_spread, line);
         }
-        return results;
+        g_lock.unlock();
+        return;
     }
 
     ASSERT(env.mode() == Mode::SearchAndReplace || env.mode() == Mode::SearchAndReplaceDryRun);
@@ -386,6 +386,7 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
     Size source_index = 0;
     String output_line;
 
+    g_lock.lock();
     for (auto &match : matches) {
         // set up the source line and spread for the replacement TextRef        
         StringView source_line = StringView(source.substr(match.line_start_index(), match.line_length()));
@@ -415,9 +416,10 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
         output_line += source_line.substr(output_line_index);
 
         // make the TextRef with the replaced text
-        Size index = results.size() + 1;
-        results.emplace_back(index, filename, match.line(), output_spread, output_line);
+        g_text_refs.emplace_back(0, filename, match.line(), output_spread, output_line);
     }
+    g_lock.unlock();
+
     // append any remaining text on the output file
     output += source.substr(source_index);
 
@@ -425,18 +427,16 @@ std::vector<TextRef> process_file(const fs::path &filename, const Env &env)
     if (env.mode() == Mode::SearchAndReplace) {
         UU::write_file(filename, output);
     }
-
-    return results;
 }
 
-static void output_refs(const Env &env, std::vector<TextRef> &refs) 
+static void output_refs(Env &env) 
 {
-    std::sort(refs.begin(), refs.end(), std::less<TextRef>());
+    std::sort(g_text_refs.begin(), g_text_refs.end(), std::less<TextRef>());
 
     UU::String output(2 * 1024 * 1024);
 
     int count = 1;
-    for (auto &ref : refs) {
+    for (auto &ref : g_text_refs) {
         ref.set_index(count);
         count++;
         int flags = TextRef::HighlightMessage;
@@ -458,7 +458,7 @@ static void output_refs(const Env &env, std::vector<TextRef> &refs)
         std::ofstream file(refs_path);
         if (!file.fail()) {
             count = 1;
-            for (auto &ref : refs) {
+            for (auto &ref : g_text_refs) {
                 ref.set_index(count);
                 count++;
                 ref.write_to_string(output, TextRef::StandardFeatures, TextRef::FilenameFormat::ABSOLUTE);
@@ -467,6 +467,10 @@ static void output_refs(const Env &env, std::vector<TextRef> &refs)
             file << output;
         } 
     }
+
+    UU::time_check_done(5);
+    std::cout << "time: " << UU::time_check_elapsed_seconds(5) << std::endl;
+    // std::cout << UU::Context::get().allocator().stats() << std::endl;
 }
 
 static void version(void)
@@ -519,7 +523,7 @@ static struct option long_options[] =
 
 int main(int argc, char **argv)
 {
-    Context::init();
+    UU::time_check_mark(5);
 
     LOG_CHANNEL_ON(General);
     LOG_CHANNEL_ON(Memory);
@@ -655,7 +659,7 @@ int main(int argc, char **argv)
     Skip skip = option_s ? Skip::SkipNone : Skip::SkipSkippables;
     LimitToSearchables limit_to_searchables = option_a ? LimitToSearchables::No : LimitToSearchables::Yes;
 
-    Env env(fs::current_path(),
+    __block Env env(fs::current_path(),
             string_needles,
             regex_needles,
             replacement,
@@ -672,41 +676,37 @@ int main(int argc, char **argv)
     const auto &files = build_file_list(env, current_path);
 
 #if USE_DISPATCH
-    dispatch_queue_t completion_queue = dispatch_queue_create("iota-search", DISPATCH_QUEUE_SERIAL);
-
     __block int completions = 0;
-    __block std::vector<TextRef> all_refs;
 
     for (const auto &filename : files) {
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
-            auto file_refs = process_file(filename, env);
-            dispatch_async(completion_queue, ^{
-                all_refs.insert(all_refs.end(), file_refs.begin(), file_refs.end());
-                completions++;
-                if (completions == files.size()) {
-                    output_refs(env, all_refs);
-                    exit(0);
-                }
-            });
+            process_file(filename, env);
+            g_lock.lock();
+            completions++;
+            if (completions == files.size()) {
+                output_refs(env);
+                exit(0);
+            }
+            g_lock.unlock();
         });
     }
 
     dispatch_main();
 #else
-    std::vector<std::future<std::vector<TextRef>>> futures;
+    std::vector<std::future<void>> futures;
     futures.reserve(files.size());
     for (const auto &filename : files) {
         auto a = std::async(std::launch::async, process_file, filename, env);
         futures.push_back(std::move(a));
     }
 
-    std::vector<TextRef> all_refs;
-    for (auto &f :futures) {
-        std::vector<TextRef> file_refs = f.get();
-        all_refs.insert(all_refs.cend(), file_refs.begin(), file_refs.end());
-    }
+    // std::vector<TextRef> text_refs;
+    // for (auto &f :futures) {
+    //     std::vector<TextRef> file_refs = f.get();
+    //     text_refs.insert(text_refs.cend(), file_refs.begin(), file_refs.end());
+    // }
 
-    output_refs(env, all_refs);
+    output_refs(env);
 #endif
 
     return 0;
